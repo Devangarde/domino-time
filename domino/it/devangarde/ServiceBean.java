@@ -1,6 +1,7 @@
 package it.devangarde;
 
 import org.json.simple.parser.JSONParser;
+import org.json.simple.JSONObject;
 
 import java.util.Map;
 import java.util.HashMap;
@@ -86,7 +87,7 @@ public class ServiceBean extends com.ibm.xsp.extlib.component.rest.CustomService
 	}
 	
     protected void fail(Throwable t, ResponseCode rc) {
-    	// in console del server solo errori 500
+    	// only log 500 errors to the server console
         if (rc.httpStatusCode >= 500 && rc.httpStatusCode < 600) t.printStackTrace();
         ServiceException ex = new ServiceException((Exception) t, rc);
         this.engine.displayError(ex);
@@ -113,8 +114,8 @@ public class ServiceBean extends com.ibm.xsp.extlib.component.rest.CustomService
 	
 	protected String formatTimestamp(Object dateTime) throws Exception {
 		if (dateTime == null) return null;
-		if (dateTime instanceof DateTime) return dateTime.getDate().toInstant().toString();
-		if (dateTime instanceof java.util.Date) return dateTime.toInstant().toString();
+		if (dateTime instanceof DateTime) return ((DateTime)dateTime).toJavaDate().toInstant().toString();
+		if (dateTime instanceof java.util.Date) return ((java.util.Date)dateTime).toInstant().toString();
 		throw new Exception("Unsupported DateTime object: " + dateTime.getClass().getCanonicalName());
 	}
 	

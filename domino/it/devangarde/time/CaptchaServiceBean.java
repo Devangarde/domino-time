@@ -6,9 +6,9 @@ import it.devangarde.captcha.CaptchaService;
 /**
  * GET .../api.xsp/captcha
  *
- * Nessuno slug: il captcha non dipende dal professionista. Va richiamato solo
- * nella fase di riepilogo, subito prima della conferma (il token ha TTL breve
- * e non deve scadere prima che l'utente lo compili).
+ * No slug: the captcha does not depend on the professional. It should only
+ * be requested in the summary step, right before confirmation (the token has
+ * a short TTL and must not expire before the user fills it in).
  */
 public class CaptchaServiceBean extends ServiceBean {
 

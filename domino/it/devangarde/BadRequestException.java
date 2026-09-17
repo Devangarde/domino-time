@@ -5,7 +5,7 @@ public class BadRequestException extends Exception {
 	private static final long serialVersionUID = 1L;
 	
 	public BadRequestException() {
-		super("Richiesta non valida");
+		super("Invalid request");
 	}
 
 	public BadRequestException(String message) {

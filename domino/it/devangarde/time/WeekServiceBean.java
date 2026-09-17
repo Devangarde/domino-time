@@ -12,18 +12,17 @@ import java.util.TimeZone;
 /**
  * GET .../api.xsp/week/&lt;slug&gt;?weekOffset=N&full=true
  *
- * full=true va usato solo alla prima chiamata: restituisce anche i dati
- * "statici" del profilo (frase, tipologie+durate, modello orario settimanale)
- * che il client cachera' in stato Vue; le chiamate successive (cambio
- * settimana) possono omettere full e ricevere solo gli intervalli liberi
- * della settimana richiesta.
+ * full=true should be used only on the first call: it also returns the
+ * profile's "static" data (subject, types+durations, weekly hour template)
+ * that the client will cache in Vue state; subsequent calls (changing week)
+ * can omit full and receive only the free intervals for the requested week.
  *
- * NOTA: PROBE_DATE qui e' una costante di comodo; andrebbe spostata in una
- * configurazione dell'app (o del singolo Profilo) invece che hardcoded.
+ * NOTE: PROBE_DATE here is a convenience constant; it should be moved to an
+ * app-level (or per-profile) configuration instead of being hardcoded.
  */
 public class WeekServiceBean extends TimeServiceBean {
 
-    private static final String PROBE_DATE = "2016-12-30"; // giorno feriale arbitrario, nessuna festivita' nota
+    private static final String PROBE_DATE = "2016-12-30"; // arbitrary weekday, no known holiday
 
     private static final SimpleDateFormat ISO_UTC = newIsoFormat();
     private static final SimpleDateFormat DAY_FORMAT = newDayFormat();
@@ -49,7 +48,7 @@ public class WeekServiceBean extends TimeServiceBean {
             String raw = this.queryString.get("weekOffset");
             if (raw != null) weekOffset = Math.max(0, Integer.parseInt(raw.trim()));
         } catch (NumberFormatException ignored) {
-            // weekOffset non numerico: si resta sulla settimana corrente
+            // non-numeric weekOffset: stay on the current week
         }
 
         Date targetMonday = mondayOfWeek(new Date(), weekOffset);
@@ -77,7 +76,7 @@ public class WeekServiceBean extends TimeServiceBean {
 
     private JSONObject buildProfileJson() throws Exception {
         JSONObject profileJson = new JSONObject();
-        profileJson.put("greeting", this.greeting);
+        profileJson.put("subject", this.subject);
 
         JSONArray typesJson = new JSONArray();
         for (AppointmentType t : this.appointmentTypes) {
@@ -91,10 +90,10 @@ public class WeekServiceBean extends TimeServiceBean {
         }
         profileJson.put("types", typesJson);
 
-        // granularita' minima (1 minuto) per non perdere confini/pause corte
-        // nella derivazione strutturale: diverso dal minDuration() usato per
-        // la disponibilita' reale, che invece riflette la durata minima
-        // prenotabile.
+        // minimum granularity (1 minute) so short boundaries/breaks are not
+        // lost in the structural derivation: different from minDuration()
+        // used for real availability, which instead reflects the minimum
+        // bookable duration.
         Date probeMonday = mondayOfWeek(DAY_FORMAT.parse(PROBE_DATE), 0);
         WeekTemplate.Day[] template = WeekTemplate.deriveTemplate(this.session, this.username, probeMonday, 1);
 
@@ -121,7 +120,7 @@ public class WeekServiceBean extends TimeServiceBean {
         return profileJson;
     }
 
-    /** Lunedi' (00:00 UTC) della settimana di anchor, spostata di weekOffset settimane. */
+    /** Monday (00:00 UTC) of anchor's week, shifted by weekOffset weeks. */
     private static Date mondayOfWeek(Date anchor, int weekOffset) {
         Calendar cal = Calendar.getInstance(TimeZone.getTimeZone("UTC"));
         cal.setTime(anchor);
@@ -130,7 +129,7 @@ public class WeekServiceBean extends TimeServiceBean {
         cal.set(Calendar.SECOND, 0);
         cal.set(Calendar.MILLISECOND, 0);
 
-        int day = cal.get(Calendar.DAY_OF_WEEK); // 1=domenica..7=sabato
+        int day = cal.get(Calendar.DAY_OF_WEEK); // 1=Sunday..7=Saturday
         int diffToMonday = (day == Calendar.SUNDAY) ? -6 : (Calendar.MONDAY - day);
         cal.add(Calendar.DAY_OF_MONTH, diffToMonday + weekOffset * 7);
         return cal.getTime();

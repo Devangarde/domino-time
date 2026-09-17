@@ -22,20 +22,21 @@ import java.util.Vector;
 /**
  * POST .../api.xsp/create/&lt;slug&gt;
  *
- * Payload atteso:
+ * Expected payload:
  * { "start": "ISO-8601", "end": "ISO-8601", "type": "...", "name": "...",
  *   "email": "...", "captcha": { "token": "...", "user": "..." } }
  *
- * La durata non serve nel payload: si ricava da start/end.
+ * Duration is not needed in the payload: it is derived from start/end.
  *
- * ATTENZIONE (da verificare con un test reale prima di andare in produzione):
- * - il formato ORGANIZER/ATTENDEE del VEVENT qui usato e' minimale (nessun
- *   ORGANIZER esplicito, ATTENDEE come mailto:); Domino potrebbe preferire un
- *   formato diverso per un attendee esterno o per una entry senza organizer.
- * - CS_WRITE_DISABLE_IMPLICIT_SCHEDULING dovrebbe creare la entry senza
- *   inviare subito le notice di invito (bozza); da confermare che il
- *   comportamento osservato corrisponda davvero a una bozza modificabile e
- *   "inviabile" in un secondo momento dal client Notes.
+ * WARNING (to verify with a real test before going to production):
+ * - the ORGANIZER/ATTENDEE format of the VEVENT used here is minimal (no
+ *   explicit ORGANIZER, ATTENDEE as mailto:); Domino might prefer a
+ *   different format for an external attendee or for an entry with no
+ *   organizer.
+ * - CS_WRITE_DISABLE_IMPLICIT_SCHEDULING should create the entry without
+ *   immediately sending invite notices (draft); needs to be confirmed that
+ *   the observed behavior really corresponds to a draft that is editable
+ *   and can be "sent" later on from the Notes client.
  */
 public class CreateServiceBean extends TimeServiceBean {
 
@@ -48,9 +49,9 @@ public class CreateServiceBean extends TimeServiceBean {
     }
 
     /**
-     * getString/getObject non esistono su it.devangarde.JSONObject (erano di
-     * una superclass non più in uso): letture minime via .get(key), assumendo
-     * che JSONObject sia una Map (come org.json.simple.JSONObject).
+     * getString/getObject do not exist on it.devangarde.JSONObject (they
+     * belonged to a superclass no longer in use): minimal reads via
+     * .get(key), assuming JSONObject is a Map (like org.json.simple.JSONObject).
      */
     private static Optional<String> getString(JSONObject obj, String key) {
         Object v = obj.get(key);
@@ -66,14 +67,14 @@ public class CreateServiceBean extends TimeServiceBean {
         loadProfile();
 
         if (this.payload == null) {
-            throw new BadRequestException("Dati mancanti");
+            throw new BadRequestException("Missing data");
         }
 
-        String startIso = getString(this.payload, "start").orElseThrow(() -> new BadRequestException("Dati mancanti"));
-        String endIso = getString(this.payload, "end").orElseThrow(() -> new BadRequestException("Dati mancanti"));
-        String type = getString(this.payload, "type").orElseThrow(() -> new BadRequestException("Dati mancanti"));
-        String requesterName = getString(this.payload, "name").orElseThrow(() -> new BadRequestException("Dati mancanti"));
-        String requesterEmail = getString(this.payload, "email").orElseThrow(() -> new BadRequestException("Dati mancanti"));
+        String startIso = getString(this.payload, "start").orElseThrow(() -> new BadRequestException("Missing data"));
+        String endIso = getString(this.payload, "end").orElseThrow(() -> new BadRequestException("Missing data"));
+        String type = getString(this.payload, "type").orElseThrow(() -> new BadRequestException("Missing data"));
+        String requesterName = getString(this.payload, "name").orElseThrow(() -> new BadRequestException("Missing data"));
+        String requesterEmail = getString(this.payload, "email").orElseThrow(() -> new BadRequestException("Missing data"));
 
         verifyCaptcha();
 
@@ -83,18 +84,18 @@ public class CreateServiceBean extends TimeServiceBean {
             start = Date.from(Instant.parse(startIso));
             end = Date.from(Instant.parse(endIso));
         } catch (Exception e) {
-            throw new BadRequestException("Data/ora non valida");
+            throw new BadRequestException("Invalid date/time");
         }
         if (!start.before(end)) {
-            throw new BadRequestException("Intervallo non valido");
+            throw new BadRequestException("Invalid time range");
         }
 
-        // Ri-verifica lo slot al momento della conferma: stesso principio già
-        // validato nella versione Node (evita doppie prenotazioni nella
-        // finestra tra caricamento griglia e click di conferma), qui basato
-        // su freeTimeSearch invece che sulla REST FreeBusy.
+        // Re-check the slot at confirmation time: same principle already
+        // validated in the Node version (avoids double bookings in the
+        // window between loading the grid and clicking confirm), here based
+        // on freeTimeSearch instead of the REST FreeBusy.
         if (!isSlotFree(start, end)) {
-            throw new BadRequestException("Lo slot scelto non è più disponibile, ricarica la pagina.");
+            throw new BadRequestException("The chosen slot is no longer available, please reload the page.");
         }
 
         String uid = UUID.randomUUID().toString();
@@ -106,20 +107,20 @@ public class CreateServiceBean extends TimeServiceBean {
 
         sendNotification(type, start, end, requesterName, requesterEmail);
 
-        this.body.put("message", "Richiesta inviata. Il professionista la esaminerà e ti invierà l'invito da confermare.");
+        this.body.put("message", "Request sent. The professional will review it and send you an invite to confirm.");
     }
 
     private void verifyCaptcha() throws BadRequestException {
         JSONObject captchaObj = getObject(this.payload, "captcha")
-                .orElseThrow(() -> new BadRequestException("Verifica di sicurezza richiesta"));
+                .orElseThrow(() -> new BadRequestException("Security check required"));
         String token = getString(captchaObj, "token")
-                .orElseThrow(() -> new BadRequestException("Verifica di sicurezza richiesta"));
+                .orElseThrow(() -> new BadRequestException("Security check required"));
         String answer = getString(captchaObj, "user")
-                .orElseThrow(() -> new BadRequestException("Verifica di sicurezza richiesta"));
+                .orElseThrow(() -> new BadRequestException("Security check required"));
 
         CaptchaService captchaService = new CaptchaService("TODO"); // TODO
         if (!captchaService.verify(token, answer)) {
-            throw new BadRequestException("Verifica di sicurezza fallita");
+            throw new BadRequestException("Security check failed");
         }
     }
 
@@ -176,8 +177,8 @@ public class CreateServiceBean extends TimeServiceBean {
                 + "DTSTAMP:" + dtStamp + "\r\n"
                 + "DTSTART:" + dtStart + "\r\n"
                 + "DTEND:" + dtEnd + "\r\n"
-                + "SUMMARY:" + escape(type + " con " + requesterName) + "\r\n"
-                + "DESCRIPTION:" + escape("Richiesta da " + requesterName + " <" + requesterEmail + ">") + "\r\n"
+                + "SUMMARY:" + escape(type + " with " + requesterName) + "\r\n"
+                + "DESCRIPTION:" + escape("Request from " + requesterName + " <" + requesterEmail + ">") + "\r\n"
                 + "END:VEVENT\r\n"
                 + "END:VCALENDAR\r\n";
     }
@@ -193,13 +194,13 @@ public class CreateServiceBean extends TimeServiceBean {
         try {
             memo.replaceItemValue("Form", "Memo");
             memo.replaceItemValue("SendTo", this.username);
-            memo.replaceItemValue("Subject", "Nuova richiesta di appuntamento da " + requesterName);
+            memo.replaceItemValue("Subject", "New appointment request from " + requesterName);
 
             StringBuilder body = new StringBuilder();
-            body.append("Tipo: ").append(type).append('\n');
-            body.append("Data/ora richiesta (UTC): ").append(start).append(" - ").append(end).append('\n');
-            body.append("Richiedente: ").append(requesterName).append(" <").append(requesterEmail).append(">\n\n");
-            body.append("È stata creata una bozza nel tuo calendario: apri Notes per rivederla e inviare l'invito al cliente.");
+            body.append("Type: ").append(type).append('\n');
+            body.append("Requested date/time (UTC): ").append(start).append(" - ").append(end).append('\n');
+            body.append("Requester: ").append(requesterName).append(" <").append(requesterEmail).append(">\n\n");
+            body.append("A draft has been created in your calendar: open Notes to review it and send the invite to the client.");
             memo.replaceItemValue("Body", body.toString());
 
             memo.send(false);

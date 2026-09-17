@@ -13,14 +13,16 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Base comune per le API legate a un professionista: risolve lo slug in path
- * (.../week/&lt;slug&gt;, .../create/&lt;slug&gt;), carica il documento Profilo dall'NSF
- * dell'applicazione (non dalla posta) e valida che esista e non sia sospeso.
+ * Common base for the APIs tied to a professional: resolves the slug from the
+ * path (.../week/&lt;slug&gt;, .../create/&lt;slug&gt;), loads the User document from
+ * the application's own NSF (not from the mail file), and validates that it
+ * exists and is enabled.
  *
- * NOTA: nomi di form/campi assunti in base a quanto descritto a voce (Profilo:
- * Username, Mailfile, Slug, Sospeso, Frase; Tipologia: Nome, Descrizione,
- * Durate, come documenti response del Profilo). Vanno allineati ai nomi reali
- * una volta creati i form in Domino Designer.
+ * NOTE: form/field names assumed from what was described verbally (User:
+ * Username, Mailfile, Slug, Enabled, Subject; appointment type: Nome,
+ * Descrizione, Durate, as response documents of the profile). These need to
+ * be aligned with the real names once the forms are created in Domino
+ * Designer.
  */
 public abstract class TimeServiceBean extends ServiceBean {
 
@@ -31,57 +33,73 @@ public abstract class TimeServiceBean extends ServiceBean {
     }
 
     protected String slug;
-    protected Document profileDoc;
-    protected String username;      // canonical name, es. CN=Administrator/O=Sandbox
-    protected String mailFilePath;  // es. mail\administ.nsf
-    protected String greeting;
+    protected Document userDoc;
+    protected String username;      // canonical name, e.g. CN=Administrator/O=Sandbox
+    protected String mailFilePath;  // e.g. mail\administ.nsf
+    protected String subject;
     protected List<AppointmentType> appointmentTypes = new ArrayList<>();
 
     private Database mailDb;
     private NotesCalendar calendar;
 
-    /** Da chiamare come prima riga di get()/post() nelle sottoclassi. */
+    /** Call this as the first line of get()/post() in subclasses. */
     protected void loadProfile() throws Exception {
-        String pathInfo = this.request.getPathInfo();
-        this.slug = (pathInfo == null) ? "" : pathInfo.replaceFirst("^/+", "").trim();
+        this.slug = extractSlug(this.request.getPathInfo());
         if (this.slug.isEmpty()) {
-            throw new BadRequestException("Professionista non specificato");
+            throw new BadRequestException("Invalid URL");
         }
 
-        View bySlug = this.db.getView("BySlug");
-        if (bySlug == null) {
-            throw new IllegalStateException("Vista 'BySlug' non trovata nell'applicazione");
+        View users = this.db.getView("By Slug");
+        if (users == null) {
+            throw new IllegalStateException("View 'Users' not found in the application");
         }
         try {
-            this.profileDoc = bySlug.getDocumentByKey(this.slug, true);
+            this.userDoc = users.getDocumentByKey(this.slug, true);
         } finally {
-            bySlug.recycle();
+            users.recycle();
         }
-        if (this.profileDoc == null) {
-            throw new BadRequestException("Professionista non trovato");
+        if (this.userDoc == null) {
+            throw new BadRequestException("User not found");
         }
 
-        boolean suspended = "1".equals(this.profileDoc.getItemValueString("Sospeso"));
+        // Suspended when Enabled is empty (not when it holds "0"/false: it is
+        // the mere presence of a value in Enabled that marks the profile as active).
+        boolean suspended = this.userDoc.getItemValueString("Enabled").isEmpty();
         if (suspended) {
-            throw new BadRequestException("Prenotazioni temporaneamente sospese");
+            throw new BadRequestException("Bookings are temporarily suspended");
         }
 
-        this.username = this.profileDoc.getItemValueString("Username");
-        this.mailFilePath = this.profileDoc.getItemValueString("Mailfile");
-        this.greeting = this.profileDoc.getItemValueString("Frase");
-        if (this.greeting == null || this.greeting.isEmpty()) {
-            this.greeting = "Prenota un appuntamento con me";
+        this.username = this.userDoc.getItemValueString("Username");
+        this.mailFilePath = this.userDoc.getItemValueString("Mailfile");
+        this.subject = this.userDoc.getItemValueString("Subject");
+        if (this.subject == null || this.subject.isEmpty()) {
+            this.subject = "Book an appointment with me";
         }
         if (this.username == null || this.username.isEmpty() || this.mailFilePath == null || this.mailFilePath.isEmpty()) {
-            throw new IllegalStateException("Profilo incompleto per slug " + this.slug);
+            throw new IllegalStateException("Incomplete profile for slug " + this.slug);
         }
 
         loadAppointmentTypes();
     }
 
-    /** Assume le tipologie come documenti response del profilo (form "TipoAppuntamento"). */
+    /**
+     * pathInfo is everything after the XPage itself, e.g. for
+     * /api.xsp/week/&lt;slug&gt; pathInfo is "/week/&lt;slug&gt;": segment 0 is the
+     * REST service name (week/create), segment 1 is the slug. Any further
+     * segment (/week/&lt;slug&gt;/whatever) is ignored.
+     */
+    private static String extractSlug(String pathInfo) {
+        if (pathInfo == null) return "";
+        List<String> segments = new ArrayList<>();
+        for (String p : pathInfo.split("/")) {
+            if (!p.isEmpty()) segments.add(p);
+        }
+        return (segments.size() > 1) ? segments.get(1).trim() : "";
+    }
+
+    /** Assumes appointment types are response documents of the profile (form "TipoAppuntamento"). */
     private void loadAppointmentTypes() throws NotesException {
-        DocumentCollection responses = this.profileDoc.getResponses();
+        DocumentCollection responses = this.userDoc.getResponses();
         try {
             Document doc = responses.getFirstDocument();
             while (doc != null) {
@@ -95,7 +113,7 @@ public abstract class TimeServiceBean extends ServiceBean {
                         try {
                             t.durations.add(Integer.parseInt(v.toString().trim()));
                         } catch (NumberFormatException ignored) {
-                            // valore non numerico nel campo Durate: ignorato
+                            // non-numeric value in the Durate field: ignored
                         }
                     }
                 }
@@ -110,12 +128,12 @@ public abstract class TimeServiceBean extends ServiceBean {
         }
     }
 
-    /** Apre come signer la mail del professionista (server locale, non multi-server per ora). */
+    /** Opens the professional's mail as signer (local server only, no multi-server support yet). */
     protected Database openMailDb() throws NotesException {
         if (this.mailDb == null) {
             this.mailDb = this.session.getDatabase(this.session.getServerName(), this.mailFilePath);
             if (this.mailDb == null || !this.mailDb.isOpen()) {
-                throw new IllegalStateException("Impossibile aprire la mail: " + this.mailFilePath);
+                throw new IllegalStateException("Unable to open mail file: " + this.mailFilePath);
             }
         }
         return this.mailDb;
@@ -140,7 +158,7 @@ public abstract class TimeServiceBean extends ServiceBean {
     protected void close() {
         try { if (this.calendar != null) this.calendar.recycle(); } catch (Exception ignored) {}
         try { if (this.mailDb != null) this.mailDb.recycle(); } catch (Exception ignored) {}
-        try { if (this.profileDoc != null) this.profileDoc.recycle(); } catch (Exception ignored) {}
+        try { if (this.userDoc != null) this.userDoc.recycle(); } catch (Exception ignored) {}
         super.close();
     }
 }

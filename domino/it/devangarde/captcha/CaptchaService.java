@@ -18,9 +18,9 @@ import javax.imageio.ImageIO;
 
 public class CaptchaService {
 
-    private static final String CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // niente 0/O/1/I ambigui
+    private static final String CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // no ambiguous 0/O/1/I
     private static final int LENGTH = 5;
-    private static final long TTL_MS = 5 * 60 * 1000; // 5 minuti
+    private static final long TTL_MS = 5 * 60 * 1000; // 5 minutes
 
     private static final String ALGO = "AES/GCM/NoPadding";
     private static final int IV_LEN = 12;
@@ -30,14 +30,14 @@ public class CaptchaService {
 
     private final SecretKey key;
 
-    /** salt: la stringa che hai in Security.CAPTCHA_SALT, di QUALSIASI lunghezza */
+    /** salt: the string you have in Security.CAPTCHA_SALT, of ANY length */
     public CaptchaService(String salt) {
         try {
             MessageDigest sha256 = MessageDigest.getInstance("SHA-256");
-            byte[] keyBytes = sha256.digest(salt.getBytes(StandardCharsets.UTF_8)); // sempre 32 byte
+            byte[] keyBytes = sha256.digest(salt.getBytes(StandardCharsets.UTF_8)); // always 32 bytes
             this.key = new SecretKeySpec(keyBytes, "AES");
         } catch (Exception e) {
-            throw new IllegalStateException("Init chiave captcha fallita", e);
+            throw new IllegalStateException("Failed to initialize captcha key", e);
         }
     }
 
@@ -52,19 +52,19 @@ public class CaptchaService {
         }
     }
 
-    /** Il token è ben formato/firmato ma la scadenza è passata */
+    /** The token is well-formed/signed but has expired */
     @SuppressWarnings("serial")
 	public static class CaptchaExpiredException extends RuntimeException {
         public CaptchaExpiredException(String message) { super(message); }
     }
 
-    /** Token mancante, malformato, manomesso, o cifrato con una chiave diversa */
+    /** Token missing, malformed, tampered with, or encrypted with a different key */
     @SuppressWarnings("serial")
 	public static class CaptchaInvalidException extends RuntimeException {
         public CaptchaInvalidException(String message) { super(message); }
     }
 
-    /** Genera testo random, immagine e token cifrato. Punto di ingresso unico. */
+    /** Generates random text, image, and encrypted token. Single entry point. */
     public Captcha generate() throws IOException {
         String text = randomText();
         byte[] png = renderImage(text);
@@ -77,8 +77,8 @@ public class CaptchaService {
     }
 
     /**
-     * Verifica risposta utente contro il token ricevuto.
-     * Ritorna semplicemente false su qualsiasi problema (scaduto, manomesso, risposta errata).
+     * Verifies the user's answer against the received token.
+     * Simply returns false on any problem (expired, tampered with, wrong answer).
      */
     public boolean verify(String token, String userAnswer) {
         try {
@@ -89,9 +89,9 @@ public class CaptchaService {
         }
     }
 
-    // ---- crittografia ----
+    // ---- cryptography ----
 
-    /** expiryMillis: istante assoluto (epoch ms) di scadenza, già calcolato dal chiamante */
+    /** expiryMillis: absolute expiry instant (epoch ms), already computed by the caller */
     private String issue(String text, long expiryMillis) {
         try {
             byte[] iv = new byte[IV_LEN];
@@ -104,23 +104,23 @@ public class CaptchaService {
 
             return b64(iv) + "." + b64(ct);
         } catch (Exception e) {
-            throw new IllegalStateException("Errore emissione token captcha", e);
+            throw new IllegalStateException("Error issuing captcha token", e);
         }
     }
 
     /**
-     * Decifra il token e ritorna la soluzione in chiaro.
-     * Lancia CaptchaExpiredException se il token è valido ma scaduto,
-     * CaptchaInvalidException per qualsiasi altro problema (mancante, malformato,
-     * manomesso, o cifrato con chiave diversa).
+     * Decrypts the token and returns the plaintext solution.
+     * Throws CaptchaExpiredException if the token is valid but expired,
+     * CaptchaInvalidException for any other problem (missing, malformed,
+     * tampered with, or encrypted with a different key).
      */
     private String decryptAndExtract(String token) {
         if (token == null || token.isEmpty()) {
-            throw new CaptchaInvalidException("Token mancante");
+            throw new CaptchaInvalidException("Missing token");
         }
         int dot = token.indexOf('.');
         if (dot < 0) {
-            throw new CaptchaInvalidException("Token malformato");
+            throw new CaptchaInvalidException("Malformed token");
         }
 
         String text;
@@ -131,19 +131,19 @@ public class CaptchaService {
 
             Cipher cipher = Cipher.getInstance(ALGO);
             cipher.init(Cipher.DECRYPT_MODE, key, new GCMParameterSpec(TAG_LEN, iv));
-            byte[] plain = cipher.doFinal(ct); // lancia eccezione se alterato o chiave errata
+            byte[] plain = cipher.doFinal(ct); // throws if tampered with or wrong key
 
             String[] parts = new String(plain, StandardCharsets.UTF_8).split("\\|");
             text = parts[0];
             expiry = Long.parseLong(parts[1]);
         } catch (Exception e) {
-            // qualsiasi eccezione qui (auth-tag GCM fallito, Base64 non valido,
-            // parsing fallito) significa token manomesso o chiave sbagliata
-            throw new CaptchaInvalidException("Token non valido");
+            // any exception here (GCM auth tag check failed, invalid Base64,
+            // parsing failed) means the token was tampered with or the key is wrong
+            throw new CaptchaInvalidException("Invalid token");
         }
 
         if (System.currentTimeMillis() > expiry) {
-            throw new CaptchaExpiredException("Captcha scaduto");
+            throw new CaptchaExpiredException("Captcha expired");
         }
 
         return text;
@@ -153,7 +153,7 @@ public class CaptchaService {
         return Base64.getUrlEncoder().withoutPadding().encodeToString(b);
     }
 
-    // ---- generazione testo e immagine ----
+    // ---- text and image generation ----
 
     private String randomText() {
         StringBuilder sb = new StringBuilder(LENGTH);

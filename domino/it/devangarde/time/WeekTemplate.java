@@ -12,23 +12,23 @@ import java.util.List;
 import java.util.Vector;
 
 /**
- * Deduce il modello settimanale (giorni di apertura, orari, pause) a partire
- * dagli intervalli LIBERI restituiti da Session.freeTimeSearch, invece che dai
- * blocchi occupati come nella versione REST/Node del progetto: qui il primo e
- * l'ultimo intervallo libero del giorno definiscono apertura/chiusura, i vuoti
- * tra un intervallo libero e il successivo sono le pause (es. pranzo).
+ * Derives the weekly template (open days, hours, breaks) from the FREE
+ * intervals returned by Session.freeTimeSearch, rather than from busy blocks
+ * as in the REST/Node version of the project: here the first and last free
+ * interval of the day define opening/closing, and the gaps between one free
+ * interval and the next are the breaks (e.g. lunch).
  *
- * ATTENZIONE (da verificare contro un server Domino reale prima di fidarsi):
- * - la documentazione HCL non specifica esplicitamente se freeTimeSearch
- *   ritaglia gli intervalli liberi sui bordi della finestra richiesta; qui lo
- *   facciamo comunque manualmente per sicurezza, ma se il comportamento reale
- *   fosse diverso (es. nessun risultato quando un giorno è parzialmente fuori
- *   finestra) l'algoritmo andrebbe rivisto.
- * - nessuna correzione esplicita per il cambio ora legale/solare: DateTime è
- *   nativamente timezone-aware, ma se emergesse lo stesso sfasamento di un'ora
- *   già risolto nella versione Node (settimana di riferimento e settimana
- *   visualizzata in stagioni diverse), va aggiunta qui la stessa correzione
- *   basata sull'offset calcolato giorno per giorno.
+ * WARNING (to verify against a real Domino server before trusting it):
+ * - HCL's documentation does not explicitly state whether freeTimeSearch
+ *   clips free intervals to the edges of the requested window; we do it
+ *   manually here just in case, but if the real behavior differs (e.g. no
+ *   result when a day is partially outside the window) the algorithm would
+ *   need to be revisited.
+ * - no explicit correction for daylight saving time: DateTime is natively
+ *   timezone-aware, but if the same one-hour offset already fixed in the
+ *   Node version shows up here (reference week and displayed week in
+ *   different seasons), the same per-day offset-based correction would need
+ *   to be added.
  */
 public class WeekTemplate {
 
@@ -36,12 +36,12 @@ public class WeekTemplate {
         public boolean closed;
         public int startMin;
         public int endMin;
-        public List<int[]> breaks = new ArrayList<>(); // ciascuno {startMin, endMin}
+        public List<int[]> breaks = new ArrayList<>(); // each {startMin, endMin}
     }
 
     private static final long DAY_MS = 24L * 60 * 60 * 1000;
 
-    /** Modello dei 7 giorni (indice 0 = lunedì di probeMonday) dedotto dalla settimana di riferimento. */
+    /** Model of the 7 days (index 0 = Monday of probeMonday) derived from the reference week. */
     public static Day[] deriveTemplate(Session session, String cn, Date probeMonday, int minDurationMinutes) throws NotesException {
         Date probeEnd = new Date(probeMonday.getTime() + 7 * DAY_MS);
         List<long[]> free = rawFreeRanges(session, cn, probeMonday, probeEnd, minDurationMinutes);
@@ -54,7 +54,7 @@ public class WeekTemplate {
         return days;
     }
 
-    /** Intervalli liberi (ms assoluti, UTC epoch) nella settimana richiesta, per il controllo di disponibilità reale. */
+    /** Free intervals (absolute ms, UTC epoch) in the requested week, for the real availability check. */
     public static List<long[]> freeRangesForWeek(Session session, String cn, Date weekMonday, int minDurationMinutes) throws NotesException {
         Date weekEnd = new Date(weekMonday.getTime() + 7 * DAY_MS);
         return rawFreeRanges(session, cn, weekMonday, weekEnd, minDurationMinutes);
