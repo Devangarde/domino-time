@@ -1,0 +1,9 @@
+# da aggiungere/adattare in /etc/fail2ban/jail.local
+[domino-time-abuse]
+enabled  = true
+port     = http,https
+filter   = domino-time-abuse
+logpath  = /var/log/apache2/time.miaazienda.it-access.log
+maxretry = 5
+findtime = 300
+bantime  = 3600

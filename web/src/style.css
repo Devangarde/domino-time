@@ -1,0 +1,23 @@
+:root {
+  --pico-font-size: 100%;
+
+  /* Palette dell'app: unico punto da toccare per personalizzare i colori. */
+  --dt-text: #1f2933;
+  --dt-accent: #1a73e8;
+  --dt-selected: #e8f0fe;
+  --dt-active: #1a73e8;
+  --dt-muted: #5f6368;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --dt-text: #e8eaed;
+    --dt-selected: #2a3b55;
+    --dt-muted: #9aa0a6;
+  }
+}
+
+#app main.container {
+  max-width: 720px;
+  margin-block-start: 3rem;
+}
