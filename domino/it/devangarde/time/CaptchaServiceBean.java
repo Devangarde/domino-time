@@ -6,12 +6,13 @@ import it.devangarde.captcha.CaptchaService;
 /**
  * GET .../api.xsp/captcha
  *
- * No slug: the captcha does not depend on the professional. It should only
+ * No slug: the captcha does not depend on the user. It should only
  * be requested in the summary step, right before confirmation (the token has
  * a short TTL and must not expire before the user fills it in).
  */
 public class CaptchaServiceBean extends ServiceBean {
 
+    @SuppressWarnings("unchecked")
     public void get() throws Exception {
         CaptchaService svc = new CaptchaService("TODO"); // TODO
         CaptchaService.Captcha c = svc.generate();

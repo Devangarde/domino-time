@@ -4,7 +4,6 @@ import it.devangarde.BadRequestException;
 import it.devangarde.ServiceBean;
 import lotus.domino.Database;
 import lotus.domino.Document;
-import lotus.domino.DocumentCollection;
 import lotus.domino.NotesCalendar;
 import lotus.domino.NotesException;
 import lotus.domino.View;
@@ -13,16 +12,13 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Common base for the APIs tied to a professional: resolves the slug from the
+ * Common base for the APIs tied to a user: resolves the slug from the
  * path (.../week/&lt;slug&gt;, .../create/&lt;slug&gt;), loads the User document from
  * the application's own NSF (not from the mail file), and validates that it
  * exists and is enabled.
  *
- * NOTE: form/field names assumed from what was described verbally (User:
- * Username, Mailfile, Slug, Enabled, Subject; appointment type: Nome,
- * Descrizione, Durate, as response documents of the profile). These need to
- * be aligned with the real names once the forms are created in Domino
- * Designer.
+ * User document fields: Username, Mailfile, Slug, Enabled, Subject, plus
+ * indexed appointment types (ApptName1/ApptDesc1/ApptMins1, ApptName2/...).
  */
 public abstract class TimeServiceBean extends ServiceBean {
 
@@ -41,6 +37,7 @@ public abstract class TimeServiceBean extends ServiceBean {
 
     private Database mailDb;
     private NotesCalendar calendar;
+    private String userEmail;
 
     /** Call this as the first line of get()/post() in subclasses. */
     protected void loadProfile() throws Exception {
@@ -97,38 +94,38 @@ public abstract class TimeServiceBean extends ServiceBean {
         return (segments.size() > 1) ? segments.get(1).trim() : "";
     }
 
-    /** Assumes appointment types are response documents of the profile (form "TipoAppuntamento"). */
+    /**
+     * Appointment types live directly on the User document as indexed
+     * fields: ApptName1/ApptDesc1/ApptMins1, ApptName2/ApptDesc2/ApptMins2,
+     * etc. ApptMins is a multi-value TEXT field (e.g. "30", "60", "120").
+     * The loop stops at the first counter whose ApptName is empty.
+     */
     private void loadAppointmentTypes() throws NotesException {
-        DocumentCollection responses = this.userDoc.getResponses();
-        try {
-            Document doc = responses.getFirstDocument();
-            while (doc != null) {
-                AppointmentType t = new AppointmentType();
-                t.name = doc.getItemValueString("Nome");
-                t.description = doc.getItemValueString("Descrizione");
-                for (Object v : doc.getItemValue("Durate")) {
-                    if (v instanceof Number) {
-                        t.durations.add(((Number) v).intValue());
-                    } else if (v != null) {
-                        try {
-                            t.durations.add(Integer.parseInt(v.toString().trim()));
-                        } catch (NumberFormatException ignored) {
-                            // non-numeric value in the Durate field: ignored
-                        }
+        int i = 1;
+        while (true) {
+            String name = this.userDoc.getItemValueString("ApptName" + i);
+            if (name == null || name.isEmpty()) break;
+
+            AppointmentType t = new AppointmentType();
+            t.name = name;
+            t.description = this.userDoc.getItemValueString("ApptDesc" + i);
+            for (Object v : this.userDoc.getItemValue("ApptMins" + i)) {
+                if (v instanceof Number) {
+                    t.durations.add(((Number) v).intValue());
+                } else if (v != null) {
+                    try {
+                        t.durations.add(Integer.parseInt(v.toString().trim()));
+                    } catch (NumberFormatException ignored) {
+                        // non-numeric value in ApptMins: ignored
                     }
                 }
-                this.appointmentTypes.add(t);
-
-                Document next = responses.getNextDocument(doc);
-                doc.recycle();
-                doc = next;
             }
-        } finally {
-            responses.recycle();
+            this.appointmentTypes.add(t);
+            i++;
         }
     }
 
-    /** Opens the professional's mail as signer (local server only, no multi-server support yet). */
+    /** Opens the user's mail as signer (local server only, no multi-server support yet). */
     protected Database openMailDb() throws NotesException {
         if (this.mailDb == null) {
             this.mailDb = this.session.getDatabase(this.session.getServerName(), this.mailFilePath);
@@ -137,6 +134,58 @@ public abstract class TimeServiceBean extends ServiceBean {
             }
         }
         return this.mailDb;
+    }
+
+    /**
+     * Looks up the user's internet address in the Domino Directory
+     * (names.nsf, view "($Users)", keyed by the canonical Username), field
+     * InternetAddress. Needed for the iCalendar ORGANIZER line, since the
+     * User profile document only stores the canonical name, not an email.
+     */
+    protected String getUserInternetAddress() throws NotesException {
+        if (this.userEmail == null) {
+            Database namesDb = this.session.getDatabase(this.session.getServerName(), "names.nsf");
+            try {
+                View usersView = namesDb.getView("($Users)");
+                if (usersView == null) {
+                    throw new IllegalStateException("View '($Users)' not found in names.nsf");
+                }
+                try {
+                    Document person = usersView.getDocumentByKey(this.username, true);
+                    if (person == null) {
+                        throw new IllegalStateException("User not found in the Directory: " + this.username);
+                    }
+                    try {
+                        this.userEmail = person.getItemValueString("InternetAddress");
+                    } finally {
+                        person.recycle();
+                    }
+                } finally {
+                    usersView.recycle();
+                }
+            } finally {
+                namesDb.recycle();
+            }
+        }
+        return this.userEmail;
+    }
+
+    /**
+     * "CN=Administrator/O=Sandbox" -&gt; "Administrator/Sandbox": drops the
+     * CN=/O=/OU= prefixes from each component. Matches the CN= parameter
+     * format Domino itself uses for ORGANIZER/ATTENDEE in exported
+     * iCalendar (verified against a real Notes-exported .ics).
+     */
+    protected static String shortName(String canonicalName) {
+        if (canonicalName == null) return "";
+        StringBuilder sb = new StringBuilder();
+        for (String part : canonicalName.split("/")) {
+            String trimmed = part.trim();
+            int eq = trimmed.indexOf('=');
+            if (sb.length() > 0) sb.append('/');
+            sb.append(eq >= 0 ? trimmed.substring(eq + 1) : trimmed);
+        }
+        return sb.toString();
     }
 
     protected NotesCalendar getCalendar() throws NotesException {

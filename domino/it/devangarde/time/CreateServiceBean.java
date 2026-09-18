@@ -28,15 +28,17 @@ import java.util.Vector;
  *
  * Duration is not needed in the payload: it is derived from start/end.
  *
+ * The VEVENT includes ORGANIZER (the user, via a Directory lookup for their
+ * InternetAddress) and ATTENDEE (the external requester): without both,
+ * Domino's calendaring engine creates a personal Appointment instead of a
+ * Meeting. The CN= format ("Name/Org", no CN=/O= prefixes) and the general
+ * shape of these two lines were verified against a real Notes-exported .ics.
+ *
  * WARNING (to verify with a real test before going to production):
- * - the ORGANIZER/ATTENDEE format of the VEVENT used here is minimal (no
- *   explicit ORGANIZER, ATTENDEE as mailto:); Domino might prefer a
- *   different format for an external attendee or for an entry with no
- *   organizer.
- * - CS_WRITE_DISABLE_IMPLICIT_SCHEDULING should create the entry without
- *   immediately sending invite notices (draft); needs to be confirmed that
- *   the observed behavior really corresponds to a draft that is editable
- *   and can be "sent" later on from the Notes client.
+ * CS_WRITE_DISABLE_IMPLICIT_SCHEDULING should create the entry without
+ * immediately sending invite notices (draft); needs to be confirmed that
+ * the observed behavior really corresponds to a draft that is editable
+ * and can be "sent" later on from the Notes client.
  */
 public class CreateServiceBean extends TimeServiceBean {
 
@@ -63,6 +65,7 @@ public class CreateServiceBean extends TimeServiceBean {
         return (v instanceof JSONObject) ? Optional.of((JSONObject) v) : Optional.empty();
     }
 
+    @SuppressWarnings("unchecked")
     public void post() throws Exception {
         loadProfile();
 
@@ -107,7 +110,7 @@ public class CreateServiceBean extends TimeServiceBean {
 
         sendNotification(type, start, end, requesterName, requesterEmail);
 
-        this.body.put("message", "Request sent. The professional will review it and send you an invite to confirm.");
+        this.body.put("ok", true);
     }
 
     private void verifyCaptcha() throws BadRequestException {
@@ -163,22 +166,33 @@ public class CreateServiceBean extends TimeServiceBean {
         return false;
     }
 
-    private String buildIcalEvent(String uid, Date start, Date end, String type, String requesterName, String requesterEmail) {
+    private String buildIcalEvent(String uid, Date start, Date end, String type, String requesterName, String requesterEmail) throws NotesException {
         String dtStamp = ICAL_UTC.format(new Date());
         String dtStart = ICAL_UTC.format(start);
         String dtEnd = ICAL_UTC.format(end);
 
+        String organizerCn = shortName(this.username);
+        String organizerEmail = getUserInternetAddress();
+        if (organizerEmail == null || organizerEmail.isEmpty()) {
+            throw new IllegalStateException("No InternetAddress found in the Directory for " + this.username);
+        }
+
+        // ORGANIZER/ATTENDEE are what turns this into a Meeting instead of a
+        // plain Appointment; format verified against a real Notes-exported .ics.
         return "BEGIN:VCALENDAR\r\n"
                 + "VERSION:2.0\r\n"
-                + "PRODID:-//devangarde//domino-time//IT\r\n"
-                + "METHOD:PUBLISH\r\n"
+                + "PRODID:-//devangarde//domino-time//EN\r\n"
                 + "BEGIN:VEVENT\r\n"
                 + "UID:" + uid + "\r\n"
                 + "DTSTAMP:" + dtStamp + "\r\n"
                 + "DTSTART:" + dtStart + "\r\n"
                 + "DTEND:" + dtEnd + "\r\n"
+                + "TRANSP:OPAQUE\r\n"
+                + "SEQUENCE:0\r\n"
                 + "SUMMARY:" + escape(type + " with " + requesterName) + "\r\n"
                 + "DESCRIPTION:" + escape("Request from " + requesterName + " <" + requesterEmail + ">") + "\r\n"
+                + "ORGANIZER;CN=\"" + organizerCn + "\":mailto:" + organizerEmail + "\r\n"
+                + "ATTENDEE;ROLE=REQ-PARTICIPANT;PARTSTAT=NEEDS-ACTION;CN=\"" + escape(requesterName) + "\";RSVP=TRUE:mailto:" + requesterEmail + "\r\n"
                 + "END:VEVENT\r\n"
                 + "END:VCALENDAR\r\n";
     }

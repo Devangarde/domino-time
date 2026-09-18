@@ -1,7 +1,7 @@
 <script setup>
 import { ref, computed, onMounted, watch, nextTick } from 'vue';
 import moment from 'moment';
-import { resolveTenant, getConfig, getAvailability, getCaptcha, book } from './api.js';
+import { getWeek, getCaptcha, book } from './api.js';
 
 // Il side-effect import 'moment/locale/it' non è affidabile con il bundling
 // di Vite/Rollup (può registrare la locale su un'istanza CJS diversa da
@@ -12,15 +12,18 @@ moment.updateLocale('it', {
 });
 moment.locale('it');
 
-const tenantInfo = resolveTenant();
-const tenantError = ref(tenantInfo.error || '');
-const tenantName = ref(tenantInfo.name || '');
+// Nessuna validazione/decodifica dello slug lato client: è un identificativo
+// opaco (vedi api.js), la sua validità la decide solo il server alla prima
+// chiamata a /week. fatalError blocca l'intera pagina (link non valido,
+// professionista non trovato, prenotazioni sospese); error è invece un
+// errore "recuperabile" (es. cambio settimana fallito) mostrato in linea.
+const fatalError = ref('');
+const error = ref('');
 
-const cfg = ref({ subject: '', types: [], slotMinutes: 30 });
+const cfg = ref({ name: '', subject: '', types: [], template: [] });
 const weekOffset = ref(0);
 const availability = ref(null);
 const loading = ref(false);
-const error = ref('');
 
 const form = ref({ type: '', duration: null, name: '', email: '' });
 
@@ -34,32 +37,39 @@ const booking = ref(false);
 const cardEl = ref(null);
 
 onMounted(async () => {
-  if (tenantError.value) return;
   try {
-    cfg.value = await getConfig();
-    const firstType = cfg.value.types[0];
-    if (firstType) {
-      form.value.type = firstType.name;
-      form.value.duration = firstType.durations[0];
-    }
-    await loadWeek();
+    const data = await getWeek({ full: true });
+    applyProfile(data.profile);
+    applyWeek(data);
   } catch (e) {
-    error.value = e.message || 'Impossibile inizializzare la pagina.';
+    fatalError.value = e.message || 'Unable to load the page.';
   }
 });
 
-watch(weekOffset, loadWeek);
-
-async function loadWeek() {
+watch(weekOffset, async () => {
   loading.value = true;
   error.value = '';
   try {
-    availability.value = await getAvailability(weekOffset.value);
+    const data = await getWeek({ weekOffset: weekOffset.value });
+    applyWeek(data);
   } catch (e) {
     error.value = 'Impossibile recuperare la disponibilità.';
   } finally {
     loading.value = false;
   }
+});
+
+function applyProfile(profile) {
+  cfg.value = profile;
+  const firstType = profile.types[0];
+  if (firstType) {
+    form.value.type = firstType.name;
+    form.value.duration = firstType.durations[0];
+  }
+}
+
+function applyWeek(data) {
+  availability.value = { since: data.since, before: data.before, freeRanges: data.freeRanges };
 }
 
 const selectedType = computed(() => cfg.value.types.find((t) => t.name === form.value.type) || null);
@@ -71,12 +81,23 @@ function selectType(t) {
   }
 }
 
-function isBusy(startMs, endMs, busyTimes) {
-  return busyTimes.some((bt) => startMs < Date.parse(bt.end) && endMs > Date.parse(bt.start));
+function isFree(startMs, endMs, freeRanges) {
+  return freeRanges.some((r) => Date.parse(r.start) <= startMs && Date.parse(r.end) >= endMs);
 }
 
+// L'assenza ufficio non è riflessa da freeTimeSearch: arriva cachata in cfg
+// (letta una sola volta alla prima chiamata full=true) e va applicata a
+// mano su ogni settimana, come i freeRanges.
+function overlapsOutOfOffice(startMs, endMs) {
+  const ooo = cfg.value.outOfOffice;
+  if (!ooo) return false;
+  return startMs < Date.parse(ooo.end) && endMs > Date.parse(ooo.start);
+}
+
+// breaks arriva come coppie [startMin, endMin], non oggetti: coerente col
+// JSON prodotto da WeekTemplate.java lato server.
 function inBreak(day, m, durationMin) {
-  return day.breaks.some((b) => m < b.endMin && m + durationMin > b.startMin);
+  return day.breaks.some((b) => m < b[1] && m + durationMin > b[0]);
 }
 
 // Griglia stile "Google Calendar": righe = orari (dall'apertura più anticipata
@@ -84,10 +105,14 @@ function inBreak(day, m, durationMin) {
 // settimana. La durata è quella scelta sopra la griglia: cambiarla ricalcola
 // quali slot risultano prenotabili.
 const grid = computed(() => {
-  if (!availability.value || !form.value.duration) return { rows: [], columns: [] };
-  const { template, slotMinutes, since, busyTimes } = availability.value;
+  if (!availability.value || !cfg.value.template.length) return { rows: [], columns: [] };
+  const { since, freeRanges } = availability.value;
+  const template = cfg.value.template;
   const sinceMs = Date.parse(since);
   const now = Date.now();
+  // Senza una durata selezionabile (es. nessuna tipologia configurata) la
+  // griglia va comunque disegnata: semplicemente ogni cella risulta non
+  // prenotabile, invece di far sparire l'intero calendario.
   const duration = form.value.duration;
 
   const columns = template.map((day, i) => ({ dayStartMs: sinceMs + i * 86400000, closed: day.closed }));
@@ -99,16 +124,18 @@ const grid = computed(() => {
   const rowEnd = Math.max(...openDays.map((d) => d.endMin));
 
   const rows = [];
-  for (let m = rowStart; m < rowEnd; m += slotMinutes) {
+  for (let m = rowStart; m < rowEnd; m += 30) {
     const cells = template.map((day, i) => {
       if (day.closed) return { state: 'closed' };
+      if (!duration) return { state: 'outside' };
       if (m < day.startMin || m + duration > day.endMin) return { state: 'outside' };
       if (inBreak(day, m, duration)) return { state: 'break' };
 
       const startMs = columns[i].dayStartMs + m * 60000;
       const endMs = startMs + duration * 60000;
       if (startMs < now) return { state: 'past' };
-      return isBusy(startMs, endMs, busyTimes) ? { state: 'busy' } : { state: 'free' };
+      if (overlapsOutOfOffice(startMs, endMs)) return { state: 'busy' };
+      return isFree(startMs, endMs, freeRanges) ? { state: 'free' } : { state: 'busy' };
     });
     rows.push({ m, label: fmtTime(columns[0].dayStartMs + m * 60000), cells });
   }
@@ -144,6 +171,15 @@ const slotRange = computed(() => {
   return { startMs, endMs: startMs + form.value.duration * 60000 };
 });
 
+// Con durata > 30 minuti, la selezione "fonde" visivamente tutte le celle di
+// 30' comprese nell'intervallo scelto, così l'occupazione reale del tempo
+// resta visibile invece di evidenziare solo lo slot di partenza.
+function isSlotActive(dayIndex, m) {
+  if (!selectedSlot.value || selectedSlot.value.dayIndex !== dayIndex) return false;
+  const duration = form.value.duration || 30;
+  return m >= selectedSlot.value.m && m < selectedSlot.value.m + duration;
+}
+
 async function selectSlot(dayIndex, dayStartMs, m) {
   selectedSlot.value = { dayIndex, dayStartMs, m };
   bookingError.value = '';
@@ -168,13 +204,20 @@ async function confirmBooking() {
       start: new Date(slotRange.value.startMs).toISOString(),
       end: new Date(slotRange.value.endMs).toISOString(),
       type: form.value.type,
-      duration: form.value.duration,
       name: form.value.name,
       email: form.value.email,
-      captchaToken: captcha.value.token,
-      captchaAnswer: captchaAnswer.value,
+      captcha: { token: captcha.value.token, user: captchaAnswer.value },
     });
     cardStep.value = 'done';
+
+    // Rinfresca la disponibilità: lo slot appena prenotato deve risultare
+    // occupato in griglia. Best-effort: se fallisce non invalida la
+    // prenotazione già andata a buon fine.
+    try {
+      applyWeek(await getWeek({ weekOffset: weekOffset.value }));
+    } catch {
+      // ignorato: la griglia resterà quella precedente fino al prossimo cambio settimana
+    }
   } catch (e) {
     bookingError.value = e.message;
     captcha.value = await getCaptcha();
@@ -197,13 +240,13 @@ function fmtTime(ms) {
 
 <template>
   <main class="container">
-    <p v-if="tenantError" class="error">{{ tenantError }}</p>
+    <p v-if="fatalError" class="error">{{ fatalError }}</p>
 
     <template v-else>
       <header class="app-header">
         <div class="who">
           <div class="avatar" aria-hidden="true">👤</div>
-          <strong>{{ tenantName }}</strong>
+          <strong>{{ cfg.name }}</strong>
         </div>
         <div class="subject">{{ cfg.subject }}</div>
         <div></div>
@@ -259,7 +302,7 @@ function fmtTime(ms) {
               v-for="(cell, ci) in row.cells"
               :key="row.m + '-' + ci"
               class="cal-cell"
-              :class="[cell.state, { active: selectedSlot && selectedSlot.dayIndex === ci && selectedSlot.m === row.m }]"
+              :class="[cell.state, { active: isSlotActive(ci, row.m) }]"
               :disabled="cell.state !== 'free'"
               @click="selectSlot(ci, grid.columns[ci].dayStartMs, row.m)"
             ></button>
@@ -282,7 +325,7 @@ function fmtTime(ms) {
           <label>Email
             <input type="email" v-model="form.email" required />
           </label>
-          <div v-if="captcha" class="captcha" v-html="captcha.svg"></div>
+          <img v-if="captcha" class="captcha-img" :src="captcha.image" alt="captcha" />
           <label>Testo dell'immagine
             <input v-model="captchaAnswer" required autocomplete="off" />
           </label>
@@ -460,11 +503,9 @@ function fmtTime(ms) {
   padding: 0;
   cursor: pointer;
 }
-.captcha {
-  display: inline-block;
-  background: #fff;
+.captcha-img {
+  display: block;
   border-radius: var(--pico-border-radius);
-  padding: 0.25rem;
 }
 
 .app-footer {

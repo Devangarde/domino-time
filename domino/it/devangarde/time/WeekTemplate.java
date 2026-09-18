@@ -9,6 +9,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.Date;
 import java.util.List;
+import java.util.TimeZone;
 import java.util.Vector;
 
 /**
@@ -18,17 +19,20 @@ import java.util.Vector;
  * interval of the day define opening/closing, and the gaps between one free
  * interval and the next are the breaks (e.g. lunch).
  *
+ * The raw days are derived from a reference week (probeMonday) and then
+ * re-expressed in UTC minutes for the week actually being displayed
+ * (targetMonday), going through local time as an intermediate step: opening
+ * hours are a rule defined in LOCAL wall-clock time (e.g. "9-18"), so they
+ * must be converted using each week's own daylight-saving offset, not
+ * copied verbatim in UTC across weeks in different seasons (same fix
+ * already applied in the Node version of this project).
+ *
  * WARNING (to verify against a real Domino server before trusting it):
- * - HCL's documentation does not explicitly state whether freeTimeSearch
- *   clips free intervals to the edges of the requested window; we do it
- *   manually here just in case, but if the real behavior differs (e.g. no
- *   result when a day is partially outside the window) the algorithm would
- *   need to be revisited.
- * - no explicit correction for daylight saving time: DateTime is natively
- *   timezone-aware, but if the same one-hour offset already fixed in the
- *   Node version shows up here (reference week and displayed week in
- *   different seasons), the same per-day offset-based correction would need
- *   to be added.
+ * HCL's documentation does not explicitly state whether freeTimeSearch
+ * clips free intervals to the edges of the requested window; we do it
+ * manually here just in case, but if the real behavior differs (e.g. no
+ * result when a day is partially outside the window) the algorithm would
+ * need to be revisited.
  */
 public class WeekTemplate {
 
@@ -41,17 +45,47 @@ public class WeekTemplate {
 
     private static final long DAY_MS = 24L * 60 * 60 * 1000;
 
-    /** Model of the 7 days (index 0 = Monday of probeMonday) derived from the reference week. */
-    public static Day[] deriveTemplate(Session session, String cn, Date probeMonday, int minDurationMinutes) throws NotesException {
+    /**
+     * Model of the 7 days (index 0 = Monday) derived from the reference week
+     * (probeMonday) and adapted to the week actually being displayed
+     * (targetMonday), accounting for any daylight-saving difference between
+     * the two.
+     */
+    public static Day[] deriveTemplate(Session session, String cn, Date probeMonday, Date targetMonday, String timeZoneId, int minDurationMinutes) throws NotesException {
         Date probeEnd = new Date(probeMonday.getTime() + 7 * DAY_MS);
         List<long[]> free = rawFreeRanges(session, cn, probeMonday, probeEnd, minDurationMinutes);
 
+        TimeZone tz = TimeZone.getTimeZone(timeZoneId);
         Day[] days = new Day[7];
         for (int d = 0; d < 7; d++) {
-            long dayStartMs = probeMonday.getTime() + d * DAY_MS;
-            days[d] = buildDay(free, dayStartMs, dayStartMs + DAY_MS);
+            long probeDayStartMs = probeMonday.getTime() + d * DAY_MS;
+            Day rawDay = buildDay(free, probeDayStartMs, probeDayStartMs + DAY_MS);
+
+            if (rawDay.closed) {
+                days[d] = rawDay;
+                continue;
+            }
+
+            int probeOffset = offsetMinutes(tz, probeDayStartMs);
+            long targetDayStartMs = targetMonday.getTime() + d * DAY_MS;
+            int targetOffset = offsetMinutes(tz, targetDayStartMs);
+            int shift = targetOffset - probeOffset; // e.g. CEST(+120) - CET(+60) = +60
+
+            Day day = new Day();
+            day.closed = false;
+            day.startMin = rawDay.startMin - shift;
+            day.endMin = rawDay.endMin - shift;
+            for (int[] b : rawDay.breaks) {
+                day.breaks.add(new int[]{ b[0] - shift, b[1] - shift });
+            }
+            days[d] = day;
         }
         return days;
+    }
+
+    /** Offset (in minutes) of the given time zone from UTC at the given instant, DST included. */
+    private static int offsetMinutes(TimeZone tz, long epochMs) {
+        return tz.getOffset(epochMs) / 60000;
     }
 
     /** Free intervals (absolute ms, UTC epoch) in the requested week, for the real availability check. */
