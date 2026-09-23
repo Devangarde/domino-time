@@ -9,13 +9,13 @@ export default defineConfig({
       // /apps/time.nsf/api.xsp/...: la chiave '/api' da sola duplicherebbe
       // "api.xsp" nell'URL finale, serve una rewrite esplicita.
       '/api.xsp': {
-        target: 'http://localhost',
+        target: 'https://time.devangarde.it',
         changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/api\.xsp/, '/apps/time.nsf/api.xsp'),
       },
     },
   },
   build: {
     outDir: 'dist',
+    assetsDir: '',
   },
 });

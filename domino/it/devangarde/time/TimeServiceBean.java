@@ -7,9 +7,15 @@ import lotus.domino.Document;
 import lotus.domino.NotesCalendar;
 import lotus.domino.NotesException;
 import lotus.domino.View;
+import org.json.simple.JSONArray;
+import org.json.simple.JSONObject;
 
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Calendar;
+import java.util.Date;
 import java.util.List;
+import java.util.TimeZone;
 
 /**
  * Common base for the APIs tied to a user: resolves the slug from the
@@ -43,12 +49,12 @@ public abstract class TimeServiceBean extends ServiceBean {
     protected void loadProfile() throws Exception {
         this.slug = extractSlug(this.request.getPathInfo());
         if (this.slug.isEmpty()) {
-            throw new BadRequestException("Invalid URL");
+            throw new BadRequestException("invalidUrl");
         }
 
         View users = this.db.getView("By Slug");
         if (users == null) {
-            throw new IllegalStateException("View 'Users' not found in the application");
+            throw new IllegalStateException("usersViewNotFound");
         }
         try {
             this.userDoc = users.getDocumentByKey(this.slug, true);
@@ -56,14 +62,14 @@ public abstract class TimeServiceBean extends ServiceBean {
             users.recycle();
         }
         if (this.userDoc == null) {
-            throw new BadRequestException("User not found");
+            throw new BadRequestException("userNotFound");
         }
 
         // Suspended when Enabled is empty (not when it holds "0"/false: it is
         // the mere presence of a value in Enabled that marks the profile as active).
         boolean suspended = this.userDoc.getItemValueString("Enabled").isEmpty();
         if (suspended) {
-            throw new BadRequestException("Bookings are temporarily suspended");
+            throw new BadRequestException("bookingsSuspended");
         }
 
         this.username = this.userDoc.getItemValueString("Username");
@@ -73,10 +79,13 @@ public abstract class TimeServiceBean extends ServiceBean {
             this.subject = "Book an appointment with me";
         }
         if (this.username == null || this.username.isEmpty() || this.mailFilePath == null || this.mailFilePath.isEmpty()) {
-            throw new IllegalStateException("Incomplete profile for slug " + this.slug);
+            throw new IllegalStateException("incompleteProfile");
         }
 
         loadAppointmentTypes();
+        if (this.appointmentTypes.isEmpty()) {
+            throw new BadRequestException("userNotConfigured");
+        }
     }
 
     /**
@@ -130,7 +139,7 @@ public abstract class TimeServiceBean extends ServiceBean {
         if (this.mailDb == null) {
             this.mailDb = this.session.getDatabase(this.session.getServerName(), this.mailFilePath);
             if (this.mailDb == null || !this.mailDb.isOpen()) {
-                throw new IllegalStateException("Unable to open mail file: " + this.mailFilePath);
+                throw new IllegalStateException("mailFileNotOpened");
             }
         }
         return this.mailDb;
@@ -148,12 +157,12 @@ public abstract class TimeServiceBean extends ServiceBean {
             try {
                 View usersView = namesDb.getView("($Users)");
                 if (usersView == null) {
-                    throw new IllegalStateException("View '($Users)' not found in names.nsf");
+                    throw new IllegalStateException("directoryViewNotFound");
                 }
                 try {
                     Document person = usersView.getDocumentByKey(this.username, true);
                     if (person == null) {
-                        throw new IllegalStateException("User not found in the Directory: " + this.username);
+                        throw new IllegalStateException("directoryUserNotFound");
                     }
                     try {
                         this.userEmail = person.getItemValueString("InternetAddress");
@@ -201,6 +210,58 @@ public abstract class TimeServiceBean extends ServiceBean {
             for (Integer d : t.durations) min = Math.min(min, d);
         }
         return min == Integer.MAX_VALUE ? 15 : min;
+    }
+
+    protected static final SimpleDateFormat ISO_UTC = newIsoUtcFormat();
+
+    private static SimpleDateFormat newIsoUtcFormat() {
+        SimpleDateFormat f = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'");
+        f.setTimeZone(TimeZone.getTimeZone("UTC"));
+        return f;
+    }
+
+    /** Monday (00:00 UTC) of the week containing anchor. */
+    protected static Date mondayOfWeekContaining(Date anchor) {
+        Calendar cal = Calendar.getInstance(TimeZone.getTimeZone("UTC"));
+        cal.setTime(anchor);
+        cal.set(Calendar.HOUR_OF_DAY, 0);
+        cal.set(Calendar.MINUTE, 0);
+        cal.set(Calendar.SECOND, 0);
+        cal.set(Calendar.MILLISECOND, 0);
+
+        int day = cal.get(Calendar.DAY_OF_WEEK); // 1=Sunday..7=Saturday
+        int diffToMonday = (day == Calendar.SUNDAY) ? -6 : (Calendar.MONDAY - day);
+        cal.add(Calendar.DAY_OF_MONTH, diffToMonday);
+        return cal.getTime();
+    }
+
+    /**
+     * Availability (since/before/freeRanges) for the week containing
+     * referenceDate, or the current week when referenceDate is null. Shared
+     * by WeekServiceBean (browsing) and CreateServiceBean (returning the
+     * updated week for the just-booked appointment's own date, in the same
+     * response, instead of a separate follow-up call the client would
+     * otherwise need to make).
+     */
+    protected JSONObject buildAvailabilityJson(Date referenceDate) throws NotesException {
+        Date monday = mondayOfWeekContaining(referenceDate != null ? referenceDate : new Date());
+        Date before = new Date(monday.getTime() + 7L * 86400000);
+
+        List<long[]> free = WeekTemplate.freeRangesForWeek(this.session, this.username, monday, minDuration());
+
+        JSONArray freeRangesJson = new JSONArray();
+        for (long[] r : free) {
+            JSONObject rj = new JSONObject();
+            rj.put("start", ISO_UTC.format(new Date(r[0])));
+            rj.put("end", ISO_UTC.format(new Date(r[1])));
+            freeRangesJson.add(rj);
+        }
+
+        JSONObject json = new JSONObject();
+        json.put("since", ISO_UTC.format(monday));
+        json.put("before", ISO_UTC.format(before));
+        json.put("freeRanges", freeRangesJson);
+        return json;
     }
 
     @Override

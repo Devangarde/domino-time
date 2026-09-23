@@ -8,16 +8,25 @@ import org.json.simple.JSONArray;
 import org.json.simple.JSONObject;
 
 import java.text.SimpleDateFormat;
+import java.time.Instant;
 import java.util.Calendar;
 import java.util.Date;
-import java.util.List;
 import java.util.TimeZone;
 import java.util.Vector;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+
 /**
- * GET .../api.xsp/week/&lt;slug&gt;?weekOffset=N&full=true
+ * GET .../api.xsp/week/{slug}slug?date=ISO-8601&full=true
+ *
+ * date is any instant within the desired week (server resolves it to that
+ * week's Monday..Sunday); omitted, it defaults to the current week. There is
+ * no "week offset" concept: to browse, the client simply shifts the last
+ * received `since` by &plusmn;7 days and passes that as `date`.
  *
  * full=true should be used only on the first call: it also returns the
  * profile's "static" data (subject, types+durations, weekly hour template)
@@ -32,14 +41,7 @@ public class WeekServiceBean extends TimeServiceBean {
     private static final String PROBE_DATE = "2016-12-30"; // arbitrary weekday, no known holiday
     private static final String TIMEZONE = "Europe/Rome"; // TODO: move to app/profile configuration
 
-    private static final SimpleDateFormat ISO_UTC = newIsoFormat();
     private static final SimpleDateFormat DAY_FORMAT = newDayFormat();
-
-    private static SimpleDateFormat newIsoFormat() {
-        SimpleDateFormat f = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'");
-        f.setTimeZone(TimeZone.getTimeZone("UTC"));
-        return f;
-    }
 
     private static SimpleDateFormat newDayFormat() {
         SimpleDateFormat f = new SimpleDateFormat("yyyy-MM-dd");
@@ -52,35 +54,27 @@ public class WeekServiceBean extends TimeServiceBean {
         loadProfile();
 
         boolean full = "true".equalsIgnoreCase(this.queryString.get("full"));
-        int weekOffset = 0;
-        try {
-            String raw = this.queryString.get("weekOffset");
-            if (raw != null) weekOffset = Math.max(0, Integer.parseInt(raw.trim()));
-        } catch (NumberFormatException ignored) {
-            // non-numeric weekOffset: stay on the current week
-        }
+        Date referenceDate = parseDateParam(this.queryString.get("date"));
 
-        Date targetMonday = mondayOfWeek(new Date(), weekOffset);
-        Date targetBefore = new Date(targetMonday.getTime() + 7L * 86400000);
+        JSONObject availability = buildAvailabilityJson(referenceDate);
+        this.body.put("since", availability.get("since"));
+        this.body.put("before", availability.get("before"));
+        this.body.put("freeRanges", availability.get("freeRanges"));
 
         if (full) {
+            Date targetMonday = mondayOfWeekContaining(referenceDate != null ? referenceDate : new Date());
             this.body.put("profile", buildProfileJson(targetMonday));
         }
+    }
 
-        int minAppointmentDuration = minDuration();
-        List<long[]> free = WeekTemplate.freeRangesForWeek(this.session, this.username, targetMonday, minAppointmentDuration);
-
-        JSONArray freeRangesJson = new JSONArray();
-        for (long[] r : free) {
-            JSONObject rj = new JSONObject();
-            rj.put("start", ISO_UTC.format(new Date(r[0])));
-            rj.put("end", ISO_UTC.format(new Date(r[1])));
-            freeRangesJson.add(rj);
+    /** null (-> defaults to the current week) when absent or not a valid ISO-8601 instant. */
+    private static Date parseDateParam(String raw) {
+        if (raw == null || raw.isEmpty()) return null;
+        try {
+            return Date.from(Instant.parse(raw));
+        } catch (Exception e) {
+            return null;
         }
-
-        this.body.put("since", ISO_UTC.format(targetMonday));
-        this.body.put("before", ISO_UTC.format(targetBefore));
-        this.body.put("freeRanges", freeRangesJson);
     }
 
     @SuppressWarnings("unchecked")
@@ -88,6 +82,7 @@ public class WeekServiceBean extends TimeServiceBean {
         JSONObject profileJson = new JSONObject();
         profileJson.put("name", displayName(this.username));
         profileJson.put("subject", this.subject);
+		profileJson.put("hash", convertToMD5(getUserInternetAddress().toLowerCase()));
 
         JSONArray typesJson = new JSONArray();
         for (AppointmentType t : this.appointmentTypes) {
@@ -105,7 +100,7 @@ public class WeekServiceBean extends TimeServiceBean {
         // lost in the structural derivation: different from minDuration()
         // used for real availability, which instead reflects the minimum
         // bookable duration.
-        Date probeMonday = mondayOfWeek(DAY_FORMAT.parse(PROBE_DATE), 0);
+        Date probeMonday = mondayOfWeekContaining(DAY_FORMAT.parse(PROBE_DATE));
         WeekTemplate.Day[] template = WeekTemplate.deriveTemplate(this.session, this.username, probeMonday, targetMonday, TIMEZONE, 1);
 
         JSONArray templateJson = new JSONArray();
@@ -263,18 +258,23 @@ public class WeekServiceBean extends TimeServiceBean {
         return m.find() ? m.group(1) : cn;
     }
 
-    /** Monday (00:00 UTC) of anchor's week, shifted by weekOffset weeks. */
-    private static Date mondayOfWeek(Date anchor, int weekOffset) {
-        Calendar cal = Calendar.getInstance(TimeZone.getTimeZone("UTC"));
-        cal.setTime(anchor);
-        cal.set(Calendar.HOUR_OF_DAY, 0);
-        cal.set(Calendar.MINUTE, 0);
-        cal.set(Calendar.SECOND, 0);
-        cal.set(Calendar.MILLISECOND, 0);
-
-        int day = cal.get(Calendar.DAY_OF_WEEK); // 1=Sunday..7=Saturday
-        int diffToMonday = (day == Calendar.SUNDAY) ? -6 : (Calendar.MONDAY - day);
-        cal.add(Calendar.DAY_OF_MONTH, diffToMonday + weekOffset * 7);
-        return cal.getTime();
+	private String convertToMD5(String input) {
+        try {
+            // 1. Get an MD5 MessageDigest instance
+            MessageDigest md = MessageDigest.getInstance("MD5");
+            
+            // 2. Compute the hash into a byte array
+            byte[] hashBytes = md.digest(input.getBytes(StandardCharsets.UTF_8));
+            
+            // 3. Convert the byte array to a hexadecimal string
+            StringBuilder sb = new StringBuilder();
+            for (byte b : hashBytes) {
+                sb.append(String.format("%02x", b));
+            }
+            return sb.toString();
+            
+        } catch (NoSuchAlgorithmException e) {
+            throw new RuntimeException("md5AlgorithmNotFound", e);
+        }
     }
 }

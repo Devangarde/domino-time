@@ -70,14 +70,15 @@ public class CreateServiceBean extends TimeServiceBean {
         loadProfile();
 
         if (this.payload == null) {
-            throw new BadRequestException("Missing data");
+            throw new BadRequestException("missingData");
         }
 
-        String startIso = getString(this.payload, "start").orElseThrow(() -> new BadRequestException("Missing data"));
-        String endIso = getString(this.payload, "end").orElseThrow(() -> new BadRequestException("Missing data"));
-        String type = getString(this.payload, "type").orElseThrow(() -> new BadRequestException("Missing data"));
-        String requesterName = getString(this.payload, "name").orElseThrow(() -> new BadRequestException("Missing data"));
-        String requesterEmail = getString(this.payload, "email").orElseThrow(() -> new BadRequestException("Missing data"));
+        String startIso = getString(this.payload, "start").orElseThrow(() -> new BadRequestException("missingData"));
+        String endIso = getString(this.payload, "end").orElseThrow(() -> new BadRequestException("missingData"));
+        String type = getString(this.payload, "type").orElseThrow(() -> new BadRequestException("missingData"));
+        String requesterName = getString(this.payload, "name").orElseThrow(() -> new BadRequestException("missingData"));
+        String requesterEmail = getString(this.payload, "email").orElseThrow(() -> new BadRequestException("missingData"));
+        String notes = getString(this.payload, "notes").orElse("");
 
         verifyCaptcha();
 
@@ -87,10 +88,10 @@ public class CreateServiceBean extends TimeServiceBean {
             start = Date.from(Instant.parse(startIso));
             end = Date.from(Instant.parse(endIso));
         } catch (Exception e) {
-            throw new BadRequestException("Invalid date/time");
+            throw new BadRequestException("invalidDateTime");
         }
         if (!start.before(end)) {
-            throw new BadRequestException("Invalid time range");
+            throw new BadRequestException("invalidTimeRange");
         }
 
         // Re-check the slot at confirmation time: same principle already
@@ -98,32 +99,42 @@ public class CreateServiceBean extends TimeServiceBean {
         // window between loading the grid and clicking confirm), here based
         // on freeTimeSearch instead of the REST FreeBusy.
         if (!isSlotFree(start, end)) {
-            throw new BadRequestException("The chosen slot is no longer available, please reload the page.");
+            throw new BadRequestException("slotNotAvailable");
         }
 
         String uid = UUID.randomUUID().toString();
-        String ical = buildIcalEvent(uid, start, end, type, requesterName, requesterEmail);
+        String ical = buildIcalEvent(uid, start, end, type, requesterName, requesterEmail, notes);
 
         NotesCalendar calendar = getCalendar();
         NotesCalendarEntry entry = calendar.createEntry(ical, NotesCalendar.CS_WRITE_DISABLE_IMPLICIT_SCHEDULING);
         entry.recycle();
 
-        sendNotification(type, start, end, requesterName, requesterEmail);
+        sendNotification(type, start, end, requesterName, requesterEmail, notes);
+
+        // Returns the updated week (same shape as WeekServiceBean) for the
+        // appointment's own date directly in this response: saves the client
+        // a separate follow-up /week call, which would also risk showing
+        // stale data if freeTimeSearch/the scheduling task hasn't caught up
+        // yet with the entry just created.
+        JSONObject availability = buildAvailabilityJson(start);
+        this.body.put("since", availability.get("since"));
+        this.body.put("before", availability.get("before"));
+        this.body.put("freeRanges", availability.get("freeRanges"));
 
         this.body.put("ok", true);
     }
 
     private void verifyCaptcha() throws BadRequestException {
         JSONObject captchaObj = getObject(this.payload, "captcha")
-                .orElseThrow(() -> new BadRequestException("Security check required"));
+                .orElseThrow(() -> new BadRequestException("captchaRequired"));
         String token = getString(captchaObj, "token")
-                .orElseThrow(() -> new BadRequestException("Security check required"));
+                .orElseThrow(() -> new BadRequestException("captchaRequired"));
         String answer = getString(captchaObj, "user")
-                .orElseThrow(() -> new BadRequestException("Security check required"));
+                .orElseThrow(() -> new BadRequestException("captchaRequired"));
 
         CaptchaService captchaService = new CaptchaService("TODO"); // TODO
         if (!captchaService.verify(token, answer)) {
-            throw new BadRequestException("Security check failed");
+            throw new BadRequestException("captchaFailed");
         }
     }
 
@@ -166,7 +177,7 @@ public class CreateServiceBean extends TimeServiceBean {
         return false;
     }
 
-    private String buildIcalEvent(String uid, Date start, Date end, String type, String requesterName, String requesterEmail) throws NotesException {
+    private String buildIcalEvent(String uid, Date start, Date end, String type, String requesterName, String requesterEmail, String notes) throws NotesException {
         String dtStamp = ICAL_UTC.format(new Date());
         String dtStart = ICAL_UTC.format(start);
         String dtEnd = ICAL_UTC.format(end);
@@ -174,11 +185,16 @@ public class CreateServiceBean extends TimeServiceBean {
         String organizerCn = shortName(this.username);
         String organizerEmail = getUserInternetAddress();
         if (organizerEmail == null || organizerEmail.isEmpty()) {
-            throw new IllegalStateException("No InternetAddress found in the Directory for " + this.username);
+            throw new IllegalStateException("internetAddressNotFound");
         }
 
         // ORGANIZER/ATTENDEE are what turns this into a Meeting instead of a
         // plain Appointment; format verified against a real Notes-exported .ics.
+        // DESCRIPTION is the requester's own free-text notes, if any: the
+        // requester's name/email already appear via ATTENDEE, so no need to
+        // repeat them here.
+        String description = (notes != null) ? notes.trim() : "";
+
         return "BEGIN:VCALENDAR\r\n"
                 + "VERSION:2.0\r\n"
                 + "PRODID:-//devangarde//domino-time//EN\r\n"
@@ -190,7 +206,7 @@ public class CreateServiceBean extends TimeServiceBean {
                 + "TRANSP:OPAQUE\r\n"
                 + "SEQUENCE:0\r\n"
                 + "SUMMARY:" + escape(type + " with " + requesterName) + "\r\n"
-                + "DESCRIPTION:" + escape("Request from " + requesterName + " <" + requesterEmail + ">") + "\r\n"
+                + (description.isEmpty() ? "" : "DESCRIPTION:" + escape(description) + "\r\n")
                 + "ORGANIZER;CN=\"" + organizerCn + "\":mailto:" + organizerEmail + "\r\n"
                 + "ATTENDEE;ROLE=REQ-PARTICIPANT;PARTSTAT=NEEDS-ACTION;CN=\"" + escape(requesterName) + "\";RSVP=TRUE:mailto:" + requesterEmail + "\r\n"
                 + "END:VEVENT\r\n"
@@ -202,7 +218,7 @@ public class CreateServiceBean extends TimeServiceBean {
         return s.replace("\\", "\\\\").replace(",", "\\,").replace(";", "\\;").replace("\n", "\\n");
     }
 
-    private void sendNotification(String type, Date start, Date end, String requesterName, String requesterEmail) throws NotesException {
+    private void sendNotification(String type, Date start, Date end, String requesterName, String requesterEmail, String notes) throws NotesException {
         Database mailDb = openMailDb();
         Document memo = mailDb.createDocument();
         try {
@@ -213,7 +229,11 @@ public class CreateServiceBean extends TimeServiceBean {
             StringBuilder body = new StringBuilder();
             body.append("Type: ").append(type).append('\n');
             body.append("Requested date/time (UTC): ").append(start).append(" - ").append(end).append('\n');
-            body.append("Requester: ").append(requesterName).append(" <").append(requesterEmail).append(">\n\n");
+            body.append("Requester: ").append(requesterName).append(" <").append(requesterEmail).append(">\n");
+            if (notes != null && !notes.trim().isEmpty()) {
+                body.append("Notes: ").append(notes.trim()).append('\n');
+            }
+            body.append('\n');
             body.append("A draft has been created in your calendar: open Notes to review it and send the invite to the client.");
             memo.replaceItemValue("Body", body.toString());
 

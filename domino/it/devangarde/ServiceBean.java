@@ -58,7 +58,7 @@ public class ServiceBean extends com.ibm.xsp.extlib.component.rest.CustomService
 		} catch (NoSuchMethodException e) {
 			String method = this.request.getMethod();
 			if (method.compareToIgnoreCase("head") == 0) return;
-			throw new ServiceException(new Exception("Unsupported method: " + method), ResponseCode.BAD_REQUEST);
+			throw new ServiceException(new Exception("unsupportedMethod"), ResponseCode.BAD_REQUEST);
 		} catch (InvocationTargetException e) {
             // unwrap and rethrow the real exception thrown inside get()/post()/etc.
             Throwable cause = e.getCause();
@@ -116,7 +116,7 @@ public class ServiceBean extends com.ibm.xsp.extlib.component.rest.CustomService
 		if (dateTime == null) return null;
 		if (dateTime instanceof DateTime) return ((DateTime)dateTime).toJavaDate().toInstant().toString();
 		if (dateTime instanceof java.util.Date) return ((java.util.Date)dateTime).toInstant().toString();
-		throw new Exception("Unsupported DateTime object: " + dateTime.getClass().getCanonicalName());
+		throw new Exception("unsupportedDateTime");
 	}
 	
 	private void buildQueryString() {

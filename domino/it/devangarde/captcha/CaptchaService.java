@@ -14,6 +14,8 @@ import java.security.MessageDigest;
 import java.security.SecureRandom;
 import java.util.Base64;
 import java.util.Date;
+import java.util.HashMap;
+import java.util.Map;
 import javax.imageio.ImageIO;
 
 public class CaptchaService {
@@ -37,7 +39,7 @@ public class CaptchaService {
             byte[] keyBytes = sha256.digest(salt.getBytes(StandardCharsets.UTF_8)); // always 32 bytes
             this.key = new SecretKeySpec(keyBytes, "AES");
         } catch (Exception e) {
-            throw new IllegalStateException("Failed to initialize captcha key", e);
+            throw new IllegalStateException("captchaKeyInitFailed", e);
         }
     }
 
@@ -104,7 +106,7 @@ public class CaptchaService {
 
             return b64(iv) + "." + b64(ct);
         } catch (Exception e) {
-            throw new IllegalStateException("Error issuing captcha token", e);
+            throw new IllegalStateException("captchaTokenIssueFailed", e);
         }
     }
 
@@ -163,8 +165,68 @@ public class CaptchaService {
         return sb.toString();
     }
 
+    /**
+     * Hand-drawn 5x7 dot-matrix glyphs for the exact CHARS alphabet, rendered
+     * with plain Graphics2D.fillRect() only.
+     *
+     * WHY: java.awt.Font/drawString need the JVM's platform font subsystem
+     * (on Linux, backed by native fontconfig) to resolve a logical family
+     * like "SansSerif" to an actual font file. On a minimal/headless Linux
+     * install without fontconfig + font packages, that resolution fails with
+     * "Fontconfig head is null" — which is exactly what breaks this service
+     * on Domino-on-Linux while working fine on Windows (which has its own,
+     * always-present font resolution). fillRect() never touches that
+     * subsystem at all, so this is identical on every platform/JVM with no
+     * server-side font installation required.
+     */
+    private static final Map<Character, String[]> GLYPHS = buildGlyphs();
+
+    private static Map<Character, String[]> buildGlyphs() {
+        Map<Character, String[]> f = new HashMap<>();
+        f.put('A', new String[]{".###.", "#...#", "#...#", "#####", "#...#", "#...#", "#...#"});
+        f.put('B', new String[]{"####.", "#...#", "#...#", "####.", "#...#", "#...#", "####."});
+        f.put('C', new String[]{".####", "#....", "#....", "#....", "#....", "#....", ".####"});
+        f.put('D', new String[]{"####.", "#...#", "#...#", "#...#", "#...#", "#...#", "####."});
+        f.put('E', new String[]{"#####", "#....", "#....", "####.", "#....", "#....", "#####"});
+        f.put('F', new String[]{"#####", "#....", "#....", "####.", "#....", "#....", "#...."});
+        f.put('G', new String[]{".####", "#....", "#....", "#.###", "#...#", "#...#", ".####"});
+        f.put('H', new String[]{"#...#", "#...#", "#...#", "#####", "#...#", "#...#", "#...#"});
+        f.put('J', new String[]{"..###", "...#.", "...#.", "...#.", "...#.", "#..#.", ".##.."});
+        f.put('K', new String[]{"#...#", "#..#.", "#.#..", "##...", "#.#..", "#..#.", "#...#"});
+        f.put('L', new String[]{"#....", "#....", "#....", "#....", "#....", "#....", "#####"});
+        f.put('M', new String[]{"#...#", "##.##", "#.#.#", "#...#", "#...#", "#...#", "#...#"});
+        f.put('N', new String[]{"#...#", "##..#", "#.#.#", "#..##", "#...#", "#...#", "#...#"});
+        f.put('P', new String[]{"####.", "#...#", "#...#", "####.", "#....", "#....", "#...."});
+        f.put('Q', new String[]{".###.", "#...#", "#...#", "#...#", "#.#.#", "#..#.", ".##.#"});
+        f.put('R', new String[]{"####.", "#...#", "#...#", "####.", "#.#..", "#..#.", "#...#"});
+        f.put('S', new String[]{".####", "#....", "#....", ".###.", "....#", "....#", "####."});
+        f.put('T', new String[]{"#####", "..#..", "..#..", "..#..", "..#..", "..#..", "..#.."});
+        f.put('U', new String[]{"#...#", "#...#", "#...#", "#...#", "#...#", "#...#", ".###."});
+        f.put('V', new String[]{"#...#", "#...#", "#...#", "#...#", "#...#", ".#.#.", "..#.."});
+        f.put('W', new String[]{"#...#", "#...#", "#...#", "#.#.#", "#.#.#", "#.#.#", ".#.#."});
+        f.put('X', new String[]{"#...#", "#...#", ".#.#.", "..#..", ".#.#.", "#...#", "#...#"});
+        f.put('Y', new String[]{"#...#", "#...#", ".#.#.", "..#..", "..#..", "..#..", "..#.."});
+        f.put('Z', new String[]{"#####", "....#", "...#.", "..#..", ".#...", "#....", "#####"});
+        f.put('2', new String[]{".###.", "#...#", "....#", "...#.", "..#..", ".#...", "#####"});
+        f.put('3', new String[]{".###.", "#...#", "....#", "..##.", "....#", "#...#", ".###."});
+        f.put('4', new String[]{"...##", "..#.#", ".#..#", "#...#", "#####", "....#", "....#"});
+        f.put('5', new String[]{"#####", "#....", "#....", "####.", "....#", "#...#", ".###."});
+        f.put('6', new String[]{"..##.", ".#...", "#....", "####.", "#...#", "#...#", ".###."});
+        f.put('7', new String[]{"#####", "....#", "...#.", "..#..", ".#...", ".#...", ".#..."});
+        f.put('8', new String[]{".###.", "#...#", "#...#", ".###.", "#...#", "#...#", ".###."});
+        f.put('9', new String[]{".###.", "#...#", "#...#", ".####", "....#", "...#.", ".##.."});
+        return f;
+    }
+
     private byte[] renderImage(String text) throws IOException {
-        int width = 140, height = 50;
+        int cell = 8;                  // px per dot
+        int glyphW = 5, glyphH = 7;    // dots
+        int glyphGap = 14;             // px between glyphs
+        int margin = 14;               // px
+
+        int width = margin * 2 + text.length() * (glyphW * cell) + (text.length() - 1) * glyphGap;
+        int height = margin * 2 + glyphH * cell + 10; // a bit of slack for per-char vertical jitter
+
         BufferedImage img = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB);
         Graphics2D g = img.createGraphics();
         g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
@@ -177,18 +239,28 @@ public class CaptchaService {
             g.drawLine(RNG.nextInt(width), RNG.nextInt(height), RNG.nextInt(width), RNG.nextInt(height));
         }
 
-        Font font = new Font("SansSerif", Font.BOLD, 28);
-        g.setFont(font);
-        int x = 15;
+        int x = margin;
+        int y = margin;
         for (char c : text.toCharArray()) {
-            double angle = (RNG.nextDouble() - 0.5) * 0.6;
+            String[] rows = GLYPHS.get(c);
+            double angle = (RNG.nextDouble() - 0.5) * 0.35;
+            int jitterY = RNG.nextInt(4) - 2;
+
             AffineTransform old = g.getTransform();
             g.setColor(new Color(30 + RNG.nextInt(90), 30 + RNG.nextInt(90), 30 + RNG.nextInt(90)));
-            g.translate(x, 35 + RNG.nextInt(8));
+            g.translate(x + (glyphW * cell) / 2.0, y + jitterY + (glyphH * cell) / 2.0);
             g.rotate(angle);
-            g.drawString(String.valueOf(c), 0, 0);
+            g.translate(-(glyphW * cell) / 2.0, -(glyphH * cell) / 2.0);
+            for (int r = 0; r < glyphH; r++) {
+                for (int col = 0; col < glyphW; col++) {
+                    if (rows[r].charAt(col) == '#') {
+                        g.fillRect(col * cell, r * cell, cell - 1, cell - 1);
+                    }
+                }
+            }
             g.setTransform(old);
-            x += 22;
+
+            x += glyphW * cell + glyphGap;
         }
 
         g.dispose();

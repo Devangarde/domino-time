@@ -1,0 +1,80 @@
+// Solo i moduli Pico effettivamente usati in App.vue: niente link/tabelle/
+// codice/figure/nav/tooltip/modal/accordion/dropdown/group/progress, niente
+// input color/date/file/range/search né checkbox-radio-switch (nessun
+// elemento del genere nel markup).
+@use "@picocss/pico/scss/pico" as * with (
+  $modules: (
+    "layout/grid": false,
+    "layout/overflow-auto": false,
+    "content/link": false,
+    "content/table": false,
+    "content/code": false,
+    "content/figure": false,
+    "content/misc": false,
+    "forms/checkbox-radio-switch": false,
+    "forms/input-color": false,
+    "forms/input-date": false,
+    "forms/input-file": false,
+    "forms/input-range": false,
+    "forms/input-search": false,
+    "components/accordion": false,
+    "components/dropdown": false,
+    "components/group": false,
+    "components/modal": false,
+    "components/nav": false,
+    "components/progress": false,
+    "components/tooltip": false,
+  )
+);
+
+:root {
+  --pico-font-size: 100%;
+  --pico-font-family: "Roboto", system-ui, sans-serif;
+
+  /* Palette fissa (HCL Verse), indipendente dal tema chiaro/scuro del
+     sistema: niente media query prefers-color-scheme, vedi data-theme="light"
+     su <html> in index.html per disattivare anche il dark mode di Pico. */
+  --dt-bg: #ffffff;
+  --dt-bg-alt: #f7f7f7;
+  --dt-selected: #e8e8e8;
+  --dt-muted: #777677;
+  --dt-border: #e0e0e0;
+  --dt-active: #74d2d9;
+  --dt-active-bg: #e8f4f4;
+  --dt-active-subtle: #def0f1;
+  --dt-link: #0550dc;
+  --dt-danger: #c5221f;
+  /* Non specificato esplicitamente nella palette fornita: testo principale
+     scuro neutro, coerente con lo stile "elegante" di Verse. */
+  --dt-text: #202124;
+
+  --pico-card-background-color: var(--dt-bg-alt);
+  --pico-button-box-shadow: none;
+  --pico-button-hover-box-shadow: none;
+}
+
+// Pico aggiunge un anello colorato via box-shadow sul focus dei bottoni
+// (oltre a background/border-color, già sufficienti come indicatore): lo
+// disattiviamo qui perché non è coperto dalle variabili sopra.
+button:focus,
+[type="submit"]:focus,
+[type="button"]:focus,
+[role="button"]:focus {
+  box-shadow: none;
+}
+
+body {
+  background: var(--dt-bg);
+  color: var(--dt-text);
+}
+
+a {
+  color: var(--dt-link);
+}
+
+#app main.container {
+  max-width: 920px;
+  margin-block-start: 2.5rem;
+}
+
+@import "app";
