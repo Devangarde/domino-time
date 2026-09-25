@@ -81,6 +81,7 @@ public class WeekServiceBean extends TimeServiceBean {
     private JSONObject buildProfileJson(Date targetMonday) throws Exception {
         JSONObject profileJson = new JSONObject();
         profileJson.put("name", displayName(this.username));
+        profileJson.put("org", displayOrg(this.username));
         profileJson.put("subject", this.subject);
 		profileJson.put("hash", convertToMD5(getUserInternetAddress().toLowerCase()));
 
@@ -250,12 +251,18 @@ public class WeekServiceBean extends TimeServiceBean {
     }
 
     private static final Pattern CN_PATTERN = Pattern.compile("^CN=([^/]+)", Pattern.CASE_INSENSITIVE);
+    private static final Pattern O_PATTERN = Pattern.compile("\\/O=([^/]+)", Pattern.CASE_INSENSITIVE);
 
-    /** Extracts the display name from a canonical name (CN=Administrator/O=Sandbox -> Administrator). */
-    private static String displayName(String cn) {
-        if (cn == null) return "";
-        Matcher m = CN_PATTERN.matcher(cn.trim());
-        return m.find() ? m.group(1) : cn;
+    private static String displayName(String name) {
+        if (name == null) return "";
+        Matcher m = CN_PATTERN.matcher(name.trim());
+        return m.find() ? m.group(1) : name;
+    }
+    
+    private static String displayOrg(String name) {
+        if (name == null) return "";
+        Matcher m = O_PATTERN.matcher(name.trim());
+        return m.find() ? m.group(1) : name;
     }
 
 	private String convertToMD5(String input) {

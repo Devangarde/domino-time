@@ -243,7 +243,8 @@ public abstract class TimeServiceBean extends ServiceBean {
      * response, instead of a separate follow-up call the client would
      * otherwise need to make).
      */
-    protected JSONObject buildAvailabilityJson(Date referenceDate) throws NotesException {
+    @SuppressWarnings("unchecked")
+	protected JSONObject buildAvailabilityJson(Date referenceDate) throws NotesException {
         Date monday = mondayOfWeekContaining(referenceDate != null ? referenceDate : new Date());
         Date before = new Date(monday.getTime() + 7L * 86400000);
 

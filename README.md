@@ -1,42 +1,100 @@
-# domino-time
+# Domino Time
 
-MVP di prenotazione appuntamenti (telefonata/videochiamata) integrato con HCL Domino via `/api/freebusy/busytime` (anonymous). Nessun database, nessuna scrittura su Domino: la conferma invia un'email di notifica via SMTP diretto al server Domino; l'evento va creato manualmente in Notes come Meeting (solo le Meeting risultano "busy" nel free/busy).
+Self-service appointment booking for HCL Domino.
 
-## Struttura
+Give each Domino user a short public link (e.g. `https://time.company.com/schedule/jdoe`). Anyone with the link — no Notes account required — sees the user's real availability, picks an appointment type, duration and slot, and sends a request protected by a captcha.
 
-- `server/` — API Express (freebusy, orario di lavoro, captcha, invio email)
-- `web/` — SPA Vite + Vue 3
+The request lands in the user's own Notes calendar as a **draft meeting**: the user reviews it and sends the invite from Notes when ready. A notification memo is also delivered to the user's mailbox.
 
-## URL multi-tenant
+![Domino Time booking page](screenshot.png)
 
+## How it works
+
+- Availability is computed from the user's real calendar, working hours and Out of Office settings.
+- The calendar is read and written through the Domino Java API `NotesCalendar` and `NotesCalendarEntry`. Entries are created as meetings (ORGANIZER + ATTENDEE) with implicit scheduling disabled, so nothing is sent until the user decides.
+- The slot is checked again at confirmation time to avoid double bookings.
+- The captcha is stateless: an AES-GCM encrypted token, no server-side session and no fonts required on the server.
+- Services are XPages REST services (`CustomServiceBean`), exposed as `api.xsp/week/<slug>`, `api.xsp/create/<slug>` and `api.xsp/captcha`.
+
+Tested with Domino server **14**, **14.5** and **14.5.1**.
+
+## Setup
+
+First-time setup of the server and the database.
+
+### 1. Database
+
+- Requires HCL Domino 14 or later.
+- Sign the database with an ID that can read the users' mail files and the Domino Directory: the services run as the signer.
+- The ACL must include `Anonymous` with Reader access. No additional attributes are needed.
+
+### 2. Internet Site: allow Anonymous access
+
+The Internet Site that serves the database can be shared with other applications or dedicated to Domino Time. In both cases it must allow anonymous access. In the Internet Site document, open the **Security** tab and set **Anonymous** to **Yes**:
+
+- in the **TCP authentication** section, if Domino exposes HTTP;
+- in the **TLS authentication** section, if Domino exposes (also) HTTPS.
+
+### 3. Web Site Rule
+
+Public URLs have two levels: `<keyword>/<user slug>`, e.g. `/time.nsf/schedule/jdoe`. The **keyword is fully custom**: it can be any word you like (`schedule`, `book`, `meet`...), it only has to match between the rule and the URLs you hand out.
+
+Create a new **Web Site Rule** with these fields:
+
+| Field | Value |
+| --- | --- |
+| Type of rule | `Substitution` |
+| Incoming URL pattern | `/time.nsf/schedule/*` |
+| Replacement pattern | `/time.nsf/index.html#` |
+
+In general: incoming pattern `<DbPath>/<keyword>/*`, replacement pattern `<DbPath>/index.html#`.
+
+### 4. Reverse proxy (recommended)
+
+The service is meant for **anonymous** users, so a reverse proxy in front of Domino is strongly recommended, to apply rate limiting and other protections against mass requests.
+
+With a dedicated host (e.g. `time.company.com`) the URLs can be shortened to `https://time.company.com/schedule/<slug>`.
+
+**Apache**
+
+```apache
+ProxyPassMatch "^/(.+)$" "http://<domino>/time.nsf/$1"
+ProxyPassReverse "/" "http://<domino>/time.nsf/"
 ```
-https://time.miaazienda.it/<base64url(CN=Nome Cognome/O=TuaOrg)>
+
+**nginx**
+
+```nginx
+location / {
+    proxy_pass http://<domino>/time.nsf/;
+    proxy_redirect http://<domino>/time.nsf/ /;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+}
 ```
 
-Genera lo slug con:
+## Setting up users
 
-```bash
-node -e "console.log(Buffer.from('CN=Nome Cognome/O=TuaOrg').toString('base64url'))"
-```
+Create a **User** document (from Notes) for every user who accepts bookings. The user's public URL is `<DbPath>/<keyword>/<slug>`.
 
-## Sviluppo
+| Field | Description |
+| --- | --- |
+| `Username` | Canonical name of the Domino user (as in the Domino Directory) |
+| `Mailfile` | Path of the user's mail database |
+| `Slug` | The short-URL part identifying the user, e.g. `jdoe` |
+| `Subject` | Welcome text shown on the booking page |
+| `Enabled` | Checkbox. When cleared, online booking is suspended for this user |
+| `Appointment types` | Up to three appointment types: name, description and allowed durations (30 to 120 minutes, e.g. `30, 60, 120`) |
 
-```bash
-npm install
-cp server/.env.example server/.env   # personalizza i valori
-npm run dev:server                   # API su :3000
-npm run dev:web                      # SPA su :5173, proxy /api verso :3000
-```
+The user's e-mail address is read from the Domino Directory (`InternetAddress` item of the Person document).
 
-Apri `http://localhost:5173/<slug>`.
+## Third-party components and attributions
 
-## Build & avvio produzione
+- [json-simple](https://code.google.com/archive/p/json-simple/) (`org.json.simple`), Apache License 2.0. It is included in the database; see `THIRD-PARTY-NOTICES.txt` for its license text.
+- HCL Domino / XPages Extension Library APIs, provided by the Domino server.
 
-```bash
-npm run build     # genera web/dist
-npm start         # Express serve API + SPA sulla stessa porta (APP_PORT)
-```
+## License
 
-## Deploy dietro Apache
+Domino Time (Java sources and NSF design) is released under the [Apache License 2.0](LICENSE). You may use, modify and redistribute it for free, provided that the copyright and attribution notices are kept.
 
-Vedi `deploy/apache.conf` (reverse proxy verso `APP_PORT`) e `deploy/fail2ban-filter.conf` + `deploy/fail2ban-jail.local` per il ban automatico su abusi (booking falliti/ripetuti, captcha errati, enumerazione tenant).
+The web front-end is distributed compiled inside the NSF. Its sources are not part of this repository: please get in touch if you are interested.

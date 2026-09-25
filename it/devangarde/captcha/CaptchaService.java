@@ -219,10 +219,10 @@ public class CaptchaService {
     }
 
     private byte[] renderImage(String text) throws IOException {
-        int cell = 8;                  // px per dot
+        int cell = 6;                  // px per dot
         int glyphW = 5, glyphH = 7;    // dots
-        int glyphGap = 14;             // px between glyphs
-        int margin = 14;               // px
+        int glyphGap = 12;             // px between glyphs
+        int margin = 16;               // px
 
         int width = margin * 2 + text.length() * (glyphW * cell) + (text.length() - 1) * glyphGap;
         int height = margin * 2 + glyphH * cell + 10; // a bit of slack for per-char vertical jitter
