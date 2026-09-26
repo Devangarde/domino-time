@@ -51,11 +51,10 @@ public class WeekTemplate {
      * (targetMonday), accounting for any daylight-saving difference between
      * the two.
      */
-    public static Day[] deriveTemplate(Session session, String cn, Date probeMonday, Date targetMonday, String timeZoneId, int minDurationMinutes) throws NotesException {
+    public static Day[] deriveTemplate(Session session, String cn, Date probeMonday, Date targetMonday, TimeZone tz, int minDurationMinutes) throws NotesException {
         Date probeEnd = new Date(probeMonday.getTime() + 7 * DAY_MS);
         List<long[]> free = rawFreeRanges(session, cn, probeMonday, probeEnd, minDurationMinutes);
 
-        TimeZone tz = TimeZone.getTimeZone(timeZoneId);
         Day[] days = new Day[7];
         for (int d = 0; d < 7; d++) {
             long probeDayStartMs = probeMonday.getTime() + d * DAY_MS;
@@ -84,8 +83,61 @@ public class WeekTemplate {
     }
 
     /** Offset (in minutes) of the given time zone from UTC at the given instant, DST included. */
-    private static int offsetMinutes(TimeZone tz, long epochMs) {
+    static int offsetMinutes(TimeZone tz, long epochMs) {
         return tz.getOffset(epochMs) / 60000;
+    }
+
+    /** Sorts and merges overlapping/adjacent intervals. */
+    static List<long[]> merge(List<long[]> ranges) {
+        List<long[]> sorted = new ArrayList<>(ranges);
+        sorted.sort(Comparator.comparingLong(a -> a[0]));
+        List<long[]> out = new ArrayList<>();
+        for (long[] r : sorted) {
+            long[] last = out.isEmpty() ? null : out.get(out.size() - 1);
+            if (last != null && r[0] <= last[1]) {
+                last[1] = Math.max(last[1], r[1]);
+            } else {
+                out.add(new long[]{r[0], r[1]});
+            }
+        }
+        return out;
+    }
+
+    /** The parts covered by both lists of intervals. */
+    static List<long[]> intersect(List<long[]> a, List<long[]> b) {
+        List<long[]> out = new ArrayList<>();
+        for (long[] x : merge(a)) {
+            for (long[] y : merge(b)) {
+                long s = Math.max(x[0], y[0]);
+                long e = Math.min(x[1], y[1]);
+                if (s < e) out.add(new long[]{s, e});
+            }
+        }
+        return out;
+    }
+
+    /**
+     * Day model from explicit bookable ranges ({startMin, endMin}, minutes
+     * from the day's UTC midnight): first start / last end are the opening
+     * and closing, the gaps in between are the breaks. No ranges = closed.
+     */
+    public static Day dayFromRanges(List<int[]> ranges) {
+        Day day = new Day();
+        if (ranges.isEmpty()) {
+            day.closed = true;
+            return day;
+        }
+        List<long[]> asLong = new ArrayList<>();
+        for (int[] r : ranges) asLong.add(new long[]{r[0], r[1]});
+        List<long[]> merged = merge(asLong);
+
+        day.closed = false;
+        day.startMin = (int) merged.get(0)[0];
+        day.endMin = (int) merged.get(merged.size() - 1)[1];
+        for (int i = 0; i < merged.size() - 1; i++) {
+            day.breaks.add(new int[]{(int) merged.get(i)[1], (int) merged.get(i + 1)[0]});
+        }
+        return day;
     }
 
     /** Free intervals (absolute ms, UTC epoch) in the requested week, for the real availability check. */

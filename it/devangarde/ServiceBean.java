@@ -82,6 +82,11 @@ public class ServiceBean extends com.ibm.xsp.extlib.component.rest.CustomService
 		
 	}
 	
+	/** Secret used to derive the captcha token key: the replica ID of this database. */
+	protected String getSalt() throws NotesException {
+		return this.db.getReplicaID();
+	}
+
 	protected boolean isMethod(String method) {
 		return (0 == this.request.getMethod().compareToIgnoreCase(method));
 	}

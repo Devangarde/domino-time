@@ -3,6 +3,7 @@ package it.devangarde.time;
 import it.devangarde.BadRequestException;
 import it.devangarde.ServiceBean;
 import lotus.domino.Database;
+import lotus.domino.DateTime;
 import lotus.domino.Document;
 import lotus.domino.NotesCalendar;
 import lotus.domino.NotesException;
@@ -13,9 +14,13 @@ import org.json.simple.JSONObject;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Calendar;
+import java.util.Comparator;
 import java.util.Date;
 import java.util.List;
 import java.util.TimeZone;
+import java.util.Vector;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Common base for the APIs tied to a user: resolves the slug from the
@@ -24,7 +29,10 @@ import java.util.TimeZone;
  * exists and is enabled.
  *
  * User document fields: Username, Mailfile, Slug, Enabled, Subject, plus
- * indexed appointment types (ApptName1/ApptDesc1/ApptMins1, ApptName2/...).
+ * indexed appointment types (ApptName1/ApptDesc1/ApptMins1, ApptName2/...),
+ * the optional advance-booking limit (AdvanceLimit checkbox + AdvanceDays
+ * number) and the optional per-day working hours override (checkbox
+ * Monday..Sunday + time range field TimeDispMonday..TimeDispSunday).
  */
 public abstract class TimeServiceBean extends ServiceBean {
 
@@ -40,6 +48,18 @@ public abstract class TimeServiceBean extends ServiceBean {
     protected String mailFilePath;  // e.g. mail\administ.nsf
     protected String subject;
     protected List<AppointmentType> appointmentTypes = new ArrayList<>();
+    protected Integer advanceDays;  // null = no limit
+    protected DayOverride[] overrides = new DayOverride[7]; // index 0 = Monday
+
+    /** Working hours override of one weekday: ranges are local wall-clock minutes from midnight. */
+    public static class DayOverride {
+        public boolean active;
+        public List<int[]> ranges = new ArrayList<>(); // each {startMin, endMin}, sorted
+    }
+
+    private static final String[] DAY_NAMES = {"Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"};
+    private static final long DAY_MS = 24L * 60 * 60 * 1000;
+    private TimeZone timeZone;
 
     private Database mailDb;
     private NotesCalendar calendar;
@@ -75,9 +95,6 @@ public abstract class TimeServiceBean extends ServiceBean {
         this.username = this.userDoc.getItemValueString("Username");
         this.mailFilePath = this.userDoc.getItemValueString("Mailfile");
         this.subject = this.userDoc.getItemValueString("Subject");
-        if (this.subject == null || this.subject.isEmpty()) {
-            this.subject = "Book an appointment with me";
-        }
         if (this.username == null || this.username.isEmpty() || this.mailFilePath == null || this.mailFilePath.isEmpty()) {
             throw new IllegalStateException("incompleteProfile");
         }
@@ -86,6 +103,141 @@ public abstract class TimeServiceBean extends ServiceBean {
         if (this.appointmentTypes.isEmpty()) {
             throw new BadRequestException("userNotConfigured");
         }
+
+        loadAdvanceLimit();
+        loadOverrides();
+    }
+
+    /** AdvanceLimit (checkbox, presence-based like Enabled) + AdvanceDays (number). */
+    private void loadAdvanceLimit() throws NotesException {
+        this.advanceDays = null;
+        if (isChecked(this.userDoc, "AdvanceLimit")) {
+            int days = this.userDoc.getItemValueInteger("AdvanceDays");
+            if (days > 0) this.advanceDays = days;
+        }
+    }
+
+    /**
+     * First instant NOT bookable because of the advance limit: the start of
+     * the day (in the user's time zone) after the last allowed one, where
+     * today is day 0. Long.MAX_VALUE when there is no limit.
+     */
+    protected long advanceCutoffMs() throws NotesException {
+        if (this.advanceDays == null) return Long.MAX_VALUE;
+        Calendar cal = Calendar.getInstance(getTimeZone());
+        cal.set(Calendar.HOUR_OF_DAY, 0);
+        cal.set(Calendar.MINUTE, 0);
+        cal.set(Calendar.SECOND, 0);
+        cal.set(Calendar.MILLISECOND, 0);
+        cal.add(Calendar.DAY_OF_MONTH, this.advanceDays + 1);
+        return cal.getTimeInMillis();
+    }
+
+    private static boolean isChecked(Document doc, String field) throws NotesException {
+        for (Object v : doc.getItemValue(field)) {
+            if (v != null && !v.toString().trim().isEmpty()) return true;
+        }
+        return false;
+    }
+
+    /** Monday..Sunday (checkbox) + TimeDispMonday..TimeDispSunday (multi-value time range). */
+    private void loadOverrides() throws NotesException {
+        for (int i = 0; i < 7; i++) {
+            DayOverride o = new DayOverride();
+            o.active = isChecked(this.userDoc, DAY_NAMES[i]);
+            if (o.active) o.ranges = readTimeRanges("TimeDisp" + DAY_NAMES[i]);
+            this.overrides[i] = o;
+        }
+    }
+
+    private static final Pattern TIME_OF_DAY = Pattern.compile("(\\d{1,2})[:.](\\d{2})(?:[:.]\\d{2})?\\s*([AaPp][Mm])?");
+
+    /**
+     * Reads a time range field as sorted {startMin, endMin} pairs (minutes
+     * from midnight).
+     *
+     * The values are read with getItemValue (and only that: it is the only
+     * way that works in practice) and come back as a plain flat list of
+     * DateTime objects, not as DateRange objects. Ranges are therefore
+     * deduced from the positions: 0 and 1 are the start and end of the first
+     * range, 2 and 3 of the second, and so on. A field with an odd number of
+     * values is ignored altogether; so are pairs with an unreadable time or
+     * an end that is not after the start.
+     */
+    private List<int[]> readTimeRanges(String field) throws NotesException {
+        List<int[]> out = new ArrayList<>();
+        Vector<?> values = this.userDoc.getItemValue(field);
+        if (values == null) return out;
+
+        List<Integer> minutes = new ArrayList<>();
+        for (Object o : values) {
+            if (!(o instanceof DateTime)) continue; // e.g. empty field
+            DateTime dt = (DateTime) o;
+            try {
+                minutes.add(parseTimeOfDay(dt.getTimeOnly()));
+            } finally {
+                dt.recycle();
+            }
+        }
+        if (minutes.size() % 2 != 0) return out;
+
+        for (int i = 0; i < minutes.size(); i += 2) {
+            Integer start = minutes.get(i);
+            Integer end = minutes.get(i + 1);
+            if (start != null && end != null && end > start) {
+                out.add(new int[]{start, end});
+            }
+        }
+        out.sort(Comparator.comparingInt(a -> a[0]));
+        return out;
+    }
+
+    /** "09:00:00", "9.00" or "9:00 AM" (locale dependent) -> minutes from midnight; null if not a time. */
+    private static Integer parseTimeOfDay(String text) {
+        if (text == null) return null;
+        Matcher m = TIME_OF_DAY.matcher(text.trim());
+        if (!m.find()) return null;
+        int h = Integer.parseInt(m.group(1));
+        int min = Integer.parseInt(m.group(2));
+        String ampm = m.group(3);
+        if (ampm != null) h = (h % 12) + (ampm.equalsIgnoreCase("pm") ? 12 : 0);
+        return h * 60 + min;
+    }
+
+    /**
+     * The time zone of the user, from the Timezone field of the
+     * CalendarProfile in the mail file; the default zone of the server when
+     * it is missing.
+     */
+    protected TimeZone getTimeZone() throws NotesException {
+        if (this.timeZone == null) {
+            TimeZone parsed = null;
+            Document profile = openMailDb().getProfileDocument("CalendarProfile", "");
+            if (profile != null) {
+                try {
+                    parsed = NotesTimeZone.parse(profile.getItemValueString("Timezone"));
+                } finally {
+                    profile.recycle();
+                }
+            }
+            this.timeZone = (parsed != null) ? parsed : TimeZone.getDefault();
+        }
+        return this.timeZone;
+    }
+
+    /**
+     * Override ranges of weekday d (0 = Monday) of the week starting at
+     * monday, converted from local wall-clock minutes to minutes from that
+     * day's UTC midnight (using the zone offset of that day, DST included).
+     */
+    protected List<int[]> overrideRangesUtcMinutes(int d, Date monday) throws NotesException {
+        long dayStartMs = monday.getTime() + d * DAY_MS;
+        int offset = WeekTemplate.offsetMinutes(getTimeZone(), dayStartMs + DAY_MS / 2);
+        List<int[]> out = new ArrayList<>();
+        for (int[] r : this.overrides[d].ranges) {
+            out.add(new int[]{r[0] - offset, r[1] - offset});
+        }
+        return out;
     }
 
     /**
@@ -248,7 +400,7 @@ public abstract class TimeServiceBean extends ServiceBean {
         Date monday = mondayOfWeekContaining(referenceDate != null ? referenceDate : new Date());
         Date before = new Date(monday.getTime() + 7L * 86400000);
 
-        List<long[]> free = WeekTemplate.freeRangesForWeek(this.session, this.username, monday, minDuration());
+        List<long[]> free = computeFreeRanges(monday);
 
         JSONArray freeRangesJson = new JSONArray();
         for (long[] r : free) {
@@ -263,6 +415,54 @@ public abstract class TimeServiceBean extends ServiceBean {
         json.put("before", ISO_UTC.format(before));
         json.put("freeRanges", freeRangesJson);
         return json;
+    }
+
+    /**
+     * Free intervals (UTC epoch ms) of the week starting at monday, from
+     * Session.freeTimeSearch (which already accounts for the working hours
+     * of the calendar profile and for the busy times).
+     *
+     * On the days with override, only the parts falling inside the ranges
+     * set by the user are kept. Overrides are assumed to be a subset of the
+     * working hours: whatever falls outside them is simply never free, and
+     * no error is raised.
+     */
+    protected List<long[]> computeFreeRanges(Date monday) throws NotesException {
+        List<long[]> free = new ArrayList<>(WeekTemplate.freeRangesForWeek(this.session, this.username, monday, minDuration()));
+
+        for (int d = 0; d < 7; d++) {
+            if (!this.overrides[d].active) continue;
+
+            long dayStart = monday.getTime() + d * DAY_MS;
+            long dayEnd = dayStart + DAY_MS;
+
+            List<long[]> otherDays = new ArrayList<>();
+            List<long[]> thisDay = new ArrayList<>();
+            for (long[] r : free) {
+                if (r[1] <= dayStart || r[0] >= dayEnd) {
+                    otherDays.add(r);
+                } else {
+                    if (r[0] < dayStart) otherDays.add(new long[]{r[0], dayStart});
+                    if (r[1] > dayEnd) otherDays.add(new long[]{dayEnd, r[1]});
+                    thisDay.add(new long[]{Math.max(r[0], dayStart), Math.min(r[1], dayEnd)});
+                }
+            }
+
+            List<long[]> allowed = new ArrayList<>();
+            for (int[] r : overrideRangesUtcMinutes(d, monday)) {
+                allowed.add(new long[]{dayStart + r[0] * 60000L, dayStart + r[1] * 60000L});
+            }
+
+            otherDays.addAll(WeekTemplate.intersect(thisDay, allowed));
+            free = otherDays;
+        }
+        // Days beyond the advance limit simply have no availability.
+        long cutoff = advanceCutoffMs();
+        List<long[]> limited = new ArrayList<>();
+        for (long[] r : free) {
+            if (r[0] < cutoff) limited.add(new long[]{r[0], Math.min(r[1], cutoff)});
+        }
+        return WeekTemplate.merge(limited);
     }
 
     @Override

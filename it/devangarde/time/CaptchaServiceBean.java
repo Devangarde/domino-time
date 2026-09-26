@@ -14,7 +14,7 @@ public class CaptchaServiceBean extends ServiceBean {
 
     @SuppressWarnings("unchecked")
 	public void get() throws Exception {
-        CaptchaService svc = new CaptchaService(db.getReplicaID());
+        CaptchaService svc = new CaptchaService(getSalt());
         CaptchaService.Captcha c = svc.generate();
 
         this.body.put("image", c.imageBase64);

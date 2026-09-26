@@ -1,5 +1,6 @@
 package it.devangarde.time;
 
+import it.devangarde.BadRequestException;
 import lotus.domino.Database;
 import lotus.domino.DateTime;
 import lotus.domino.Document;
@@ -33,13 +34,17 @@ import java.security.NoSuchAlgorithmException;
  * that the client will cache in Vue state; subsequent calls (changing week)
  * can omit full and receive only the free intervals for the requested week.
  *
+ * The time zone comes from the CalendarProfile of the user (see
+ * TimeServiceBean.getTimeZone). The profile also carries "timeZone" (best
+ * effort IANA id, null when unknown) and, when the limit is enabled,
+ * "advanceDays".
+ *
  * NOTE: PROBE_DATE here is a convenience constant; it should be moved to an
  * app-level (or per-profile) configuration instead of being hardcoded.
  */
 public class WeekServiceBean extends TimeServiceBean {
 
     private static final String PROBE_DATE = "2016-12-30"; // arbitrary weekday, no known holiday
-    private static final String TIMEZONE = "Europe/Rome"; // TODO: move to app/profile configuration
 
     private static final SimpleDateFormat DAY_FORMAT = newDayFormat();
 
@@ -55,6 +60,14 @@ public class WeekServiceBean extends TimeServiceBean {
 
         boolean full = "true".equalsIgnoreCase(this.queryString.get("full"));
         Date referenceDate = parseDateParam(this.queryString.get("date"));
+
+        // Error only when the WHOLE week is beyond the advance limit; a week
+        // that is partly inside is returned, its later days just have no
+        // availability.
+        Date monday = mondayOfWeekContaining(referenceDate != null ? referenceDate : new Date());
+        if (monday.getTime() >= advanceCutoffMs()) {
+            throw new BadRequestException("weekBeyondAdvanceLimit");
+        }
 
         JSONObject availability = buildAvailabilityJson(referenceDate);
         this.body.put("since", availability.get("since"));
@@ -102,7 +115,17 @@ public class WeekServiceBean extends TimeServiceBean {
         // used for real availability, which instead reflects the minimum
         // bookable duration.
         Date probeMonday = mondayOfWeekContaining(DAY_FORMAT.parse(PROBE_DATE));
-        WeekTemplate.Day[] template = WeekTemplate.deriveTemplate(this.session, this.username, probeMonday, targetMonday, TIMEZONE, 1);
+        TimeZone tz = getTimeZone();
+        WeekTemplate.Day[] template = WeekTemplate.deriveTemplate(this.session, this.username, probeMonday, targetMonday, tz, 1);
+        for (int d = 0; d < 7; d++) {
+            if (this.overrides[d].active) {
+                template[d] = WeekTemplate.dayFromRanges(overrideRangesUtcMinutes(d, targetMonday));
+            }
+        }
+        profileJson.put("timeZone", NotesTimeZone.guessIanaId(tz));
+        if (this.advanceDays != null) {
+            profileJson.put("advanceDays", this.advanceDays);
+        }
 
         JSONArray templateJson = new JSONArray();
         for (WeekTemplate.Day d : template) {
@@ -160,7 +183,7 @@ public class WeekServiceBean extends TimeServiceBean {
             Date firstDayBack = firstDateTime(ooo, "FirstDayBack");
             if (firstDayOut == null || firstDayBack == null) return null;
 
-            TimeZone tz = TimeZone.getTimeZone(TIMEZONE);
+            TimeZone tz = getTimeZone();
             Date start;
             Date end;
             if (isOne(ooo, "ShowHours")) {

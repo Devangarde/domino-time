@@ -86,6 +86,21 @@ Create a **User** document (from Notes) for every user who accepts bookings. The
 | `Enabled` | Checkbox. When cleared, online booking is suspended for this user |
 | `Appointment types` | Up to three appointment types: name, description and allowed durations (30 to 120 minutes, e.g. `30, 60, 120`) |
 
+Optional settings:
+
+| Field | Description |
+| --- | --- |
+| `AdvanceLimit` | Checkbox. When selected, bookings are limited to the next `AdvanceDays` days |
+| `AdvanceDays` | Number of days ahead that can be booked (used only when `AdvanceLimit` is selected) |
+| `Monday` ... `Sunday` | Checkbox, one per weekday. When selected, the working hours of that day are overridden (see below) |
+| `TimeDispMonday` ... `TimeDispSunday` | Multi-value time field with the bookable ranges of that day, as a list of start/end pairs: e.g. `09:00`, `13:00`, `14:00`, `16:00` means 9-13 and 14-16. A field with an odd number of values is ignored. An overridden day with no ranges is closed |
+
+By default the bookable hours are the user's availability, as set in Notes under *More > Preferences... > Calendar & To-Do > Scheduling > Availability*. With an override, only the listed ranges of that day are bookable, so a day can be restricted (e.g. 9-13 and 14-16 instead of 9-13 and 14-18).
+
+**Limitation:** an override must be a subset of the user's availability. Time outside the availability is never bookable, and no error is reported if a range goes beyond it (e.g. an override on Saturday has no effect if Saturday is not a working day).
+
+The time zone is read from the `Timezone` field of the user's Calendar Profile (mail file).
+
 The user's e-mail address is read from the Domino Directory (`InternetAddress` item of the Person document).
 
 ## Third-party components and attributions

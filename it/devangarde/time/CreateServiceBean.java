@@ -4,9 +4,8 @@ import it.devangarde.BadRequestException;
 import org.json.simple.JSONObject;
 import it.devangarde.captcha.CaptchaService;
 import lotus.domino.Database;
-import lotus.domino.DateRange;
-import lotus.domino.DateTime;
 import lotus.domino.Document;
+import lotus.domino.RichTextItem;
 import lotus.domino.NotesCalendar;
 import lotus.domino.NotesCalendarEntry;
 import lotus.domino.NotesException;
@@ -17,7 +16,6 @@ import java.util.Date;
 import java.util.Optional;
 import java.util.TimeZone;
 import java.util.UUID;
-import java.util.Vector;
 
 /**
  * POST .../api.xsp/create/&lt;slug&gt;
@@ -94,10 +92,13 @@ public class CreateServiceBean extends TimeServiceBean {
             throw new BadRequestException("invalidTimeRange");
         }
 
-        // Re-check the slot at confirmation time: same principle already
-        // validated in the Node version (avoids double bookings in the
-        // window between loading the grid and clicking confirm), here based
-        // on freeTimeSearch instead of the REST FreeBusy.
+        if (start.getTime() >= advanceCutoffMs()) {
+            throw new BadRequestException("beyondAdvanceLimit");
+        }
+
+        // Re-check the slot at confirmation time (avoids double bookings in
+        // the window between loading the grid and clicking confirm), with
+        // the very same availability logic used to draw the grid.
         if (!isSlotFree(start, end)) {
             throw new BadRequestException("slotNotAvailable");
         }
@@ -107,9 +108,11 @@ public class CreateServiceBean extends TimeServiceBean {
 
         NotesCalendar calendar = getCalendar();
         NotesCalendarEntry entry = calendar.createEntry(ical, NotesCalendar.CS_WRITE_DISABLE_IMPLICIT_SCHEDULING);
+        Document docEntry = entry.getAsDocument();
+        sendNotification(type, start, end, requesterName, requesterEmail, notes, docEntry);
+        docEntry.recycle();
         entry.recycle();
-
-        sendNotification(type, start, end, requesterName, requesterEmail, notes);
+        
 
         // Returns the updated week (same shape as WeekServiceBean) for the
         // appointment's own date directly in this response: saves the client
@@ -124,7 +127,7 @@ public class CreateServiceBean extends TimeServiceBean {
         this.body.put("ok", true);
     }
 
-    private void verifyCaptcha() throws BadRequestException {
+    private void verifyCaptcha() throws BadRequestException, NotesException {
         JSONObject captchaObj = getObject(this.payload, "captcha")
                 .orElseThrow(() -> new BadRequestException("captchaRequired"));
         String token = getString(captchaObj, "token")
@@ -132,47 +135,16 @@ public class CreateServiceBean extends TimeServiceBean {
         String answer = getString(captchaObj, "user")
                 .orElseThrow(() -> new BadRequestException("captchaRequired"));
 
-        CaptchaService captchaService = new CaptchaService("TODO"); // TODO
+        CaptchaService captchaService = new CaptchaService(getSalt());
         if (!captchaService.verify(token, answer)) {
             throw new BadRequestException("captchaFailed");
         }
     }
 
     private boolean isSlotFree(Date start, Date end) throws NotesException {
-        int minutes = (int) ((end.getTime() - start.getTime()) / 60000);
-        if (minutes <= 0) return false;
-
-        DateTime dtStart = null;
-        DateTime dtEnd = null;
-        DateRange window = null;
-        Vector<?> ranges;
-        try {
-            dtStart = this.session.createDateTime(start);
-            dtEnd = this.session.createDateTime(end);
-            window = this.session.createDateRange(dtStart, dtEnd);
-            ranges = this.session.freeTimeSearch(window, minutes, this.username, false);
-        } finally {
-            if (window != null) window.recycle();
-            if (dtStart != null) dtStart.recycle();
-            if (dtEnd != null) dtEnd.recycle();
-        }
-
-        if (ranges == null) return false;
-        for (Object o : ranges) {
-            DateRange dr = (DateRange) o;
-            DateTime s = null;
-            DateTime e = null;
-            try {
-                s = dr.getStartDateTime();
-                e = dr.getEndDateTime();
-                if (s.toJavaDate().getTime() <= start.getTime() && e.toJavaDate().getTime() >= end.getTime()) {
-                    return true;
-                }
-            } finally {
-                if (s != null) s.recycle();
-                if (e != null) e.recycle();
-                dr.recycle();
-            }
+        if (!start.before(end)) return false;
+        for (long[] r : computeFreeRanges(mondayOfWeekContaining(start))) {
+            if (r[0] <= start.getTime() && r[1] >= end.getTime()) return true;
         }
         return false;
     }
@@ -218,27 +190,45 @@ public class CreateServiceBean extends TimeServiceBean {
         return s.replace("\\", "\\\\").replace(",", "\\,").replace(";", "\\;").replace("\n", "\\n");
     }
 
-    private void sendNotification(String type, Date start, Date end, String requesterName, String requesterEmail, String notes) throws NotesException {
+    private void sendNotification(String type, Date start, Date end, String requesterName, String requesterEmail, String notes, Document docEntry) throws NotesException {
         Database mailDb = openMailDb();
         Document memo = mailDb.createDocument();
+        RichTextItem body = null;
         try {
+        	
+        	String requesterNameAndEmail = 
+        			requesterName + " <" + requesterEmail + ">";
             memo.replaceItemValue("Form", "Memo");
             memo.replaceItemValue("SendTo", this.username);
-            memo.replaceItemValue("Subject", "New appointment request from " + requesterName);
+            memo.replaceItemValue("Subject", "New appointment request: " + type);
+            memo.replaceItemValue("Principal", requesterName);
+            memo.replaceItemValue("ReplyTo", requesterNameAndEmail);
 
-            StringBuilder body = new StringBuilder();
-            body.append("Type: ").append(type).append('\n');
-            body.append("Requested date/time (UTC): ").append(start).append(" - ").append(end).append('\n');
-            body.append("Requester: ").append(requesterName).append(" <").append(requesterEmail).append(">\n");
+            body = memo.createRichTextItem("Body");
+            body.appendText("Type: " + type);
+            body.addNewLine(2);
+            body.appendText("Requested date/time (UTC): " + start + " - " + end);
+            body.addNewLine(2);
+            body.appendText("Requester: " + requesterName + " <" + requesterEmail + ">");
+            body.addNewLine(2);
             if (notes != null && !notes.trim().isEmpty()) {
-                body.append("Notes: ").append(notes.trim()).append('\n');
+                body.appendText("Notes:");
+                body.addNewLine();
+                body.appendText(notes.trim());
+                body.addNewLine(2);
             }
-            body.append('\n');
-            body.append("A draft has been created in your calendar: open Notes to review it and send the invite to the client.");
-            memo.replaceItemValue("Body", body.toString());
+            body.appendText("A draft has been created in your calendar: ");
+            body.appendDocLink(docEntry, "Calendar entry");
+            body.addNewLine(1);
+            body.appendText("Nothing has been sent to the requester yet. Open the draft to review it, then send the invitation to confirm the appointment (or delete it to decline).");
+            body.addNewLine(2);
+            body.appendText("- Domino Time");
+            body.addNewLine(1);
+            body.update();
 
             memo.send(false);
         } finally {
+        	if (body != null) body.recycle();
             memo.recycle();
         }
     }
