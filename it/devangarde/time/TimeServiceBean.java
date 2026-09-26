@@ -60,6 +60,7 @@ public abstract class TimeServiceBean extends ServiceBean {
     private static final String[] DAY_NAMES = {"Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"};
     private static final long DAY_MS = 24L * 60 * 60 * 1000;
     private TimeZone timeZone;
+    private String notesTimeZone; // raw Notes string, e.g. "Z=-1$DO=1$DL=3 -1 1 10 -1 1$ZN=..."; null if unknown
 
     private Database mailDb;
     private NotesCalendar calendar;
@@ -215,7 +216,9 @@ public abstract class TimeServiceBean extends ServiceBean {
             Document profile = openMailDb().getProfileDocument("CalendarProfile", "");
             if (profile != null) {
                 try {
-                    parsed = NotesTimeZone.parse(profile.getItemValueString("Timezone"));
+                    String raw = profile.getItemValueString("Timezone");
+                    parsed = NotesTimeZone.parse(raw);
+                    if (parsed != null) this.notesTimeZone = raw;
                 } finally {
                     profile.recycle();
                 }
@@ -223,6 +226,12 @@ public abstract class TimeServiceBean extends ServiceBean {
             this.timeZone = (parsed != null) ? parsed : TimeZone.getDefault();
         }
         return this.timeZone;
+    }
+
+    /** The Notes time zone string of the CalendarProfile as is, or null when it is missing or not understood. */
+    protected String getNotesTimeZone() throws NotesException {
+        getTimeZone();
+        return this.notesTimeZone;
     }
 
     /**

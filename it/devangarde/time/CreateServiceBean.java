@@ -4,18 +4,19 @@ import it.devangarde.BadRequestException;
 import org.json.simple.JSONObject;
 import it.devangarde.captcha.CaptchaService;
 import lotus.domino.Database;
+import lotus.domino.DateTime;
 import lotus.domino.Document;
 import lotus.domino.RichTextItem;
-import lotus.domino.NotesCalendar;
-import lotus.domino.NotesCalendarEntry;
 import lotus.domino.NotesException;
 
+import java.text.ParsePosition;
 import java.text.SimpleDateFormat;
 import java.time.Instant;
 import java.util.Date;
+import java.util.Locale;
 import java.util.Optional;
 import java.util.TimeZone;
-import java.util.UUID;
+import java.util.Vector;
 
 /**
  * POST .../api.xsp/create/&lt;slug&gt;
@@ -26,27 +27,17 @@ import java.util.UUID;
  *
  * Duration is not needed in the payload: it is derived from start/end.
  *
- * The VEVENT includes ORGANIZER (the user, via a Directory lookup for their
- * InternetAddress) and ATTENDEE (the external requester): without both,
- * Domino's calendaring engine creates a personal Appointment instead of a
- * Meeting. The CN= format ("Name/Org", no CN=/O= prefixes) and the general
- * shape of these two lines were verified against a real Notes-exported .ics.
+ * The appointment is written directly as an "Appointment" document in the
+ * mail file of the user (see createDraft), with the same items as a draft
+ * saved from Notes/Verse. The requester is only stored in EnterSendTo, so
+ * nothing is sent until the user sends the invitation from Notes.
  *
- * WARNING (to verify with a real test before going to production):
- * CS_WRITE_DISABLE_IMPLICIT_SCHEDULING should create the entry without
- * immediately sending invite notices (draft); needs to be confirmed that
- * the observed behavior really corresponds to a draft that is editable
- * and can be "sent" later on from the Notes client.
+ * WARNING (to verify with a real test before going to production): check
+ * that the document behaves as a draft in Notes (editable, "Delete" instead
+ * of "Cancel", no notice sent to the requester when deleted) and that it
+ * can be sent later on.
  */
 public class CreateServiceBean extends TimeServiceBean {
-
-    private static final SimpleDateFormat ICAL_UTC = newIcalFormat();
-
-    private static SimpleDateFormat newIcalFormat() {
-        SimpleDateFormat f = new SimpleDateFormat("yyyyMMdd'T'HHmmss'Z'");
-        f.setTimeZone(TimeZone.getTimeZone("UTC"));
-        return f;
-    }
 
     /**
      * getString/getObject do not exist on it.devangarde.JSONObject (they
@@ -103,16 +94,12 @@ public class CreateServiceBean extends TimeServiceBean {
             throw new BadRequestException("slotNotAvailable");
         }
 
-        String uid = UUID.randomUUID().toString();
-        String ical = buildIcalEvent(uid, start, end, type, requesterName, requesterEmail, notes);
-
-        NotesCalendar calendar = getCalendar();
-        NotesCalendarEntry entry = calendar.createEntry(ical, NotesCalendar.CS_WRITE_DISABLE_IMPLICIT_SCHEDULING);
-        Document docEntry = entry.getAsDocument();
-        sendNotification(type, start, end, requesterName, requesterEmail, notes, docEntry);
-        docEntry.recycle();
-        entry.recycle();
-        
+        Document docEntry = createDraft(start, end, type, requesterName, requesterEmail, notes);
+        try {
+            sendNotification(type, start, end, requesterName, requesterEmail, notes, docEntry);
+        } finally {
+            docEntry.recycle();
+        }
 
         // Returns the updated week (same shape as WeekServiceBean) for the
         // appointment's own date directly in this response: saves the client
@@ -149,45 +136,110 @@ public class CreateServiceBean extends TimeServiceBean {
         return false;
     }
 
-    private String buildIcalEvent(String uid, Date start, Date end, String type, String requesterName, String requesterEmail, String notes) throws NotesException {
-        String dtStamp = ICAL_UTC.format(new Date());
-        String dtStart = ICAL_UTC.format(start);
-        String dtEnd = ICAL_UTC.format(end);
+    /**
+     * Creates the appointment as a plain "Appointment" document in the mail
+     * file of the user, with the items a draft made from Notes/Verse has,
+     * instead of going through NotesCalendarEntry (whose entries are not
+     * treated as drafts: e.g. deleting them sends cancellation notices).
+     * The requester is only stored in EnterSendTo, so nothing is sent until
+     * the user sends the invitation from Notes.
+     */
+    private Document createDraft(Date start, Date end, String type, String requesterName, String requesterEmail, String notes) throws NotesException {
+        Document doc = openMailDb().createDocument();
+        DateTime dtStart = null;
+        DateTime dtEnd = null;
+        RichTextItem body = null;
+        boolean created = false;
+        try {
+            doc.replaceItemValue("Form", "Appointment");
 
-        String organizerCn = shortName(this.username);
-        String organizerEmail = getUserInternetAddress();
-        if (organizerEmail == null || organizerEmail.isEmpty()) {
-            throw new IllegalStateException("internetAddressNotFound");
+            for (String field : new String[]{"altPrincipal", "AltChair", "Chair", "From", "Principal"}) {
+                doc.replaceItemValue(field, this.username);
+            }
+            doc.replaceItemValue("EnterSendTo", requesterEmail);
+
+            dtStart = toNotesDateTime(start);
+            dtEnd = toNotesDateTime(end);
+            for (String field : new String[]{"CalendarDateTime", "StartDate", "StartTime", "StartDateTime"}) {
+                doc.replaceItemValue(field, dtStart);
+            }
+            for (String field : new String[]{"EndDate", "EndTime", "EndDateTime"}) {
+                doc.replaceItemValue(field, dtEnd);
+            }
+
+            String notesTimeZone = getNotesTimeZone();
+            if (notesTimeZone != null) {
+                for (String field : new String[]{"LocalTimeZone", "StartTimeZone", "EndTimeZone"}) {
+                    doc.replaceItemValue(field, notesTimeZone);
+                }
+            }
+
+            doc.replaceItemValue("$PublicAccess", "1");
+            doc.replaceItemValue("Alarms", "0");
+            doc.replaceItemValue("AppointmentType", "3");
+            doc.replaceItemValue("DeliveryPriority", "N");
+            doc.replaceItemValue("DeliveryReport", "B");
+            doc.replaceItemValue("Encrypt", "0");
+            doc.replaceItemValue("Importance", "2");
+            Vector<String> excludeFromView = new Vector<>();
+            excludeFromView.add("S");
+            excludeFromView.add("D");
+            doc.replaceItemValue("ExcludeFromView", excludeFromView);
+            doc.replaceItemValue("Subject", type + " with " + requesterName);
+
+            String text = (notes != null) ? notes.trim() : "";
+            if (!text.isEmpty()) {
+                body = doc.createRichTextItem("Body");
+                body.appendText(text);
+                body.update();
+            }
+
+            // the UNID only exists once the document is saved
+            doc.save(true, false);
+            doc.replaceItemValue("ApptUNID", doc.getUniversalID());
+            doc.save(true, false);
+
+            created = true;
+            return doc;
+        } finally {
+            if (body != null) body.recycle();
+            if (dtStart != null) dtStart.recycle();
+            if (dtEnd != null) dtEnd.recycle();
+            if (!created) doc.recycle();
         }
-
-        // ORGANIZER/ATTENDEE are what turns this into a Meeting instead of a
-        // plain Appointment; format verified against a real Notes-exported .ics.
-        // DESCRIPTION is the requester's own free-text notes, if any: the
-        // requester's name/email already appear via ATTENDEE, so no need to
-        // repeat them here.
-        String description = (notes != null) ? notes.trim() : "";
-
-        return "BEGIN:VCALENDAR\r\n"
-                + "VERSION:2.0\r\n"
-                + "PRODID:-//devangarde//domino-time//EN\r\n"
-                + "BEGIN:VEVENT\r\n"
-                + "UID:" + uid + "\r\n"
-                + "DTSTAMP:" + dtStamp + "\r\n"
-                + "DTSTART:" + dtStart + "\r\n"
-                + "DTEND:" + dtEnd + "\r\n"
-                + "TRANSP:OPAQUE\r\n"
-                + "SEQUENCE:0\r\n"
-                + "SUMMARY:" + escape(type + " with " + requesterName) + "\r\n"
-                + (description.isEmpty() ? "" : "DESCRIPTION:" + escape(description) + "\r\n")
-                + "ORGANIZER;CN=\"" + organizerCn + "\":mailto:" + organizerEmail + "\r\n"
-                + "ATTENDEE;ROLE=REQ-PARTICIPANT;PARTSTAT=NEEDS-ACTION;CN=\"" + escape(requesterName) + "\";RSVP=TRUE:mailto:" + requesterEmail + "\r\n"
-                + "END:VEVENT\r\n"
-                + "END:VCALENDAR\r\n";
     }
 
-    private String escape(String s) {
-        if (s == null) return "";
-        return s.replace("\\", "\\\\").replace(",", "\\,").replace(";", "\\;").replace("\n", "\\n");
+    /**
+     * DateTime for the given instant. session.createDateTime(Date) reads the
+     * date in the time zone of the JVM but builds the value in the one of
+     * the Notes session: when the two differ (e.g. JVM on Europe/Rome and
+     * Notes on GMT) the instant ends up shifted by the difference. The GMT
+     * time of the result is therefore compared with the wanted instant and
+     * the value is adjusted if needed. If the GMT text cannot be read the
+     * value is left as created.
+     */
+    private DateTime toNotesDateTime(Date instant) throws NotesException {
+        DateTime dt = this.session.createDateTime(instant);
+        SimpleDateFormat gmtFormat = new SimpleDateFormat("M/d/yyyy h:mm:ss a", Locale.US);
+        gmtFormat.setTimeZone(TimeZone.getTimeZone("UTC"));
+        Date actual = gmtFormat.parse(dt.getGMTTime(), new ParsePosition(0));
+        if (actual != null) {
+            long diffSeconds = (instant.getTime() - actual.getTime()) / 1000;
+            if (diffSeconds != 0) dt.adjustSecond((int) diffSeconds);
+        }
+        return dt;
+    }
+
+    /** "Fri 2 Oct 2026, 09:00 - 10:00 (+02:00)" in the time zone of the user. */
+    private String formatRequestedTime(Date start, Date end) throws NotesException {
+        TimeZone tz = getTimeZone();
+        SimpleDateFormat first = new SimpleDateFormat("EEE d MMM yyyy, HH:mm", Locale.ENGLISH);
+        SimpleDateFormat time = new SimpleDateFormat("HH:mm", Locale.ENGLISH);
+        SimpleDateFormat offset = new SimpleDateFormat("XXX", Locale.ENGLISH);
+        first.setTimeZone(tz);
+        time.setTimeZone(tz);
+        offset.setTimeZone(tz);
+        return first.format(start) + " - " + time.format(end) + " (" + offset.format(start) + ")";
     }
 
     private void sendNotification(String type, Date start, Date end, String requesterName, String requesterEmail, String notes, Document docEntry) throws NotesException {
@@ -207,7 +259,7 @@ public class CreateServiceBean extends TimeServiceBean {
             body = memo.createRichTextItem("Body");
             body.appendText("Type: " + type);
             body.addNewLine(2);
-            body.appendText("Requested date/time (UTC): " + start + " - " + end);
+            body.appendText("Requested date/time: " + formatRequestedTime(start, end));
             body.addNewLine(2);
             body.appendText("Requester: " + requesterName + " <" + requesterEmail + ">");
             body.addNewLine(2);

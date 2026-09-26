@@ -11,7 +11,7 @@ The request lands in the user's own Notes calendar as a **draft meeting**: the u
 ## How it works
 
 - Availability is computed from the user's real calendar, working hours and Out of Office settings.
-- The calendar is read and written through the Domino Java API `NotesCalendar` and `NotesCalendarEntry`. Entries are created as meetings (ORGANIZER + ATTENDEE) with implicit scheduling disabled, so nothing is sent until the user decides.
+- Free time is read through the Domino Java API (`Session.freeTimeSearch`). Each request is written as an `Appointment` document, with the same items as a draft saved from Notes or Verse, in the mail file of the user. The requester is only stored as an invitee (not yet invited), so nothing is sent until the user sends the invitation.
 - The slot is checked again at confirmation time to avoid double bookings.
 - The captcha is stateless: an AES-GCM encrypted token, no server-side session and no fonts required on the server.
 - Services are XPages REST services (`CustomServiceBean`), exposed as `api.xsp/week/<slug>`, `api.xsp/create/<slug>` and `api.xsp/captcha`.
