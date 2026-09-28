@@ -15,6 +15,7 @@ The request lands in the user's own Notes calendar as a **draft meeting**: the u
 - The slot is checked again at confirmation time to avoid double bookings.
 - The captcha is stateless: an AES-GCM encrypted token, no server-side session and no fonts required on the server.
 - Services are XPages REST services (`CustomServiceBean`), exposed as `api.xsp/week/<slug>`, `api.xsp/create/<slug>` and `api.xsp/captcha`.
+- The user's avatar on the booking page is fetched from [Gravatar](https://gravatar.com), based on their e-mail address.
 
 Tested with Domino server **14**, **14.5** and **14.5.1**.
 

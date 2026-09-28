@@ -153,7 +153,7 @@ public class CreateServiceBean extends TimeServiceBean {
         try {
             doc.replaceItemValue("Form", "Appointment");
 
-            for (String field : new String[]{"altPrincipal", "AltChair", "Chair", "From", "Principal"}) {
+            for (String field : new String[]{"$altPrincipal", "AltChair", "Chair", "From", "Principal"}) {
                 doc.replaceItemValue(field, this.username);
             }
             doc.replaceItemValue("EnterSendTo", requesterEmail);
@@ -194,9 +194,10 @@ public class CreateServiceBean extends TimeServiceBean {
                 body.update();
             }
 
-            // the UNID only exists once the document is saved
-            doc.save(true, false);
             doc.replaceItemValue("ApptUNID", doc.getUniversalID());
+			doc.replaceItemValue("SequenceNum", 1);
+			doc.replaceItemValue("UpdateSeq", 1);
+			doc.replaceItemValue("$CSVersion", "2");
             doc.save(true, false);
 
             created = true;
@@ -258,9 +259,9 @@ public class CreateServiceBean extends TimeServiceBean {
 
             body = memo.createRichTextItem("Body");
             body.appendText("Type: " + type);
-            body.addNewLine(2);
+            body.addNewLine(1);
             body.appendText("Requested date/time: " + formatRequestedTime(start, end));
-            body.addNewLine(2);
+            body.addNewLine(1);
             body.appendText("Requester: " + requesterName + " <" + requesterEmail + ">");
             body.addNewLine(2);
             if (notes != null && !notes.trim().isEmpty()) {
