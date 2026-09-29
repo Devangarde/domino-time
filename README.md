@@ -4,17 +4,16 @@ Self-service appointment booking for HCL Domino.
 
 Give each Domino user a short public link (e.g. `https://time.company.com/schedule/jdoe`). Anyone with the link — no Notes account required — sees the user's real availability, picks an appointment type, duration and slot, and sends a request protected by a captcha.
 
-The request lands in the user's own Notes calendar as a **draft meeting**: the user reviews it and sends the invite from Notes when ready. A notification memo is also delivered to the user's mailbox.
+The request lands in the user's own Notes calendar as a **draft meeting**: the user reviews it and sends the invite when ready. A notification memo is also delivered to the user's mailbox.
 
 ![Domino Time booking page](screenshot.png)
 
 ## How it works
 
-- Availability is computed from the user's real calendar, working hours and Out of Office settings.
-- Free time is read through the Domino Java API (`Session.freeTimeSearch`). Each request is written as an `Appointment` document, with the same items as a draft saved from Notes or Verse, in the mail file of the user. The requester is only stored as an invitee (not yet invited), so nothing is sent until the user sends the invitation.
+- Availability is computed from the user's real calendar, working hours, Out of Office settings and User availability.
+- Each request is written as an `Appointment` document. The requester is only stored as an invitee (not yet invited), so nothing is sent until the user sends the invitation.
 - The slot is checked again at confirmation time to avoid double bookings.
-- The captcha is stateless: an AES-GCM encrypted token, no server-side session and no fonts required on the server.
-- Services are XPages REST services (`CustomServiceBean`), exposed as `api.xsp/week/<slug>`, `api.xsp/create/<slug>` and `api.xsp/captcha`.
+- The captcha is stateless: an AES-GCM encrypted token, no server-side session and no fonts nor dependencies required on the server.
 - The user's avatar on the booking page is fetched from [Gravatar](https://gravatar.com), based on their e-mail address.
 
 Tested with Domino server **14**, **14.5** and **14.5.1**.
@@ -28,6 +27,7 @@ First-time setup of the server and the database.
 - Requires HCL Domino 14 or later.
 - Sign the database with an ID that can read the users' mail files and the Domino Directory: the services run as the signer.
 - The ACL must include `Anonymous` with Reader access. No additional attributes are needed.
+- (Optional) Regular users can be included in the ACL (e.g. `*/Org`) with **Author** access, so they can edit their own profile document. No additional attributes are needed, except **Create documents** if you also want them to be able to create new profiles themselves.
 
 ### 2. Internet Site: allow Anonymous access
 
@@ -38,15 +38,16 @@ The Internet Site that serves the database can be shared with other applications
 
 ### 3. Web Site Rule
 
-Public URLs have two levels: `<keyword>/<user slug>`, e.g. `/time.nsf/schedule/jdoe`. The **keyword is fully custom**: it can be any word you like (`schedule`, `book`, `meet`...), it only has to match between the rule and the URLs you hand out.
+Public URLs have two levels: `<keyword>/<user slug>`, e.g. `/calendar/time.nsf/schedule/jdoe`. The **keyword is fully custom**: it can be any word you like (`schedule`, `book`, `meet`...), it only has to match between the rule and the URLs you hand out.
 
 Create a new **Web Site Rule** with these fields:
 
 | Field | Value |
 | --- | --- |
+| Description | `Domino Time` |
 | Type of rule | `Substitution` |
-| Incoming URL pattern | `/time.nsf/schedule/*` |
-| Replacement pattern | `/time.nsf/index.html#` |
+| Incoming URL pattern | `/calendar/time.nsf/schedule/*` |
+| Replacement pattern | `/calendar/time.nsf/index.html#` |
 
 In general: incoming pattern `<DbPath>/<keyword>/*`, replacement pattern `<DbPath>/index.html#`.
 
@@ -59,16 +60,16 @@ With a dedicated host (e.g. `time.company.com`) the URLs can be shortened to `ht
 **Apache**
 
 ```apache
-ProxyPassMatch "^/(.+)$" "http://<domino>/time.nsf/$1"
-ProxyPassReverse "/" "http://<domino>/time.nsf/"
+ProxyPassMatch "^/(.+)$" "http://<domino>/calendar/time.nsf/$1"
+ProxyPassReverse "/" "http://<domino>/calendar/time.nsf/"
 ```
 
 **nginx**
 
 ```nginx
 location / {
-    proxy_pass http://<domino>/time.nsf/;
-    proxy_redirect http://<domino>/time.nsf/ /;
+    proxy_pass http://<domino>/calendar/time.nsf/;
+    proxy_redirect http://<domino>/calendar/time.nsf/ /;
     proxy_set_header Host $host;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
 }
@@ -76,25 +77,24 @@ location / {
 
 ## Setting up users
 
-Create a **User** document (from Notes) for every user who accepts bookings. The user's public URL is `<DbPath>/<keyword>/<slug>`.
+In Notes, create a **User** document for every user who accepts bookings. The user's public URL is `<DbPath>/<keyword>/<slug>`.
 
 | Field | Description |
 | --- | --- |
-| `Username` | Canonical name of the Domino user (as in the Domino Directory) |
-| `Mailfile` | Path of the user's mail database |
-| `Slug` | The short-URL part identifying the user, e.g. `jdoe` |
-| `Subject` | Welcome text shown on the booking page |
-| `Enabled` | Checkbox. When cleared, online booking is suspended for this user |
-| `Appointment types` | Up to three appointment types: name, description and allowed durations (30 to 120 minutes, e.g. `30, 60, 120`) |
+| Enabled | Checkbox. When cleared, online booking is suspended for this user |
+| User | Canonical name of the Domino user (as in the Domino Directory) |
+| Mail file path | Path of the user's mail database |
+| Slug (short link) | The short-URL part identifying the user, e.g. `jdoe` |
+| Welcome text | Welcome text shown on the booking page |
+| Appointment types | Up to three appointment types: name, description and allowed durations (30 to 120 minutes, e.g. `30, 60, 120`) |
 
 Optional settings:
 
 | Field | Description |
 | --- | --- |
-| `AdvanceLimit` | Checkbox. When selected, bookings are limited to the next `AdvanceDays` days |
-| `AdvanceDays` | Number of days ahead that can be booked (used only when `AdvanceLimit` is selected) |
-| `Monday` ... `Sunday` | Checkbox, one per weekday. When selected, the working hours of that day are overridden (see below) |
-| `TimeDispMonday` ... `TimeDispSunday` | Multi-value time field with the bookable ranges of that day, as a list of start/end pairs: e.g. `09:00`, `13:00`, `14:00`, `16:00` means 9-13 and 14-16. A field with an odd number of values is ignored. An overridden day with no ranges is closed |
+| Booking limit | Checkbox. When selected, bookings are limited to the next `AdvanceDays` days |
+| Maximum days | Number of days ahead that can be booked (used only when `AdvanceLimit` is selected) |
+| Monday ... Sunday | Checkbox, one per weekday. When selected, a list of start/end pairs can be provided: e.g. `09:00`, `13:00`, `14:00`, `16:00` means 9-13 and 14-16 |
 
 By default the bookable hours are the user's availability, as set in Notes under *More > Preferences... > Calendar & To-Do > Scheduling > Availability*. With an override, only the listed ranges of that day are bookable, so a day can be restricted (e.g. 9-13 and 14-16 instead of 9-13 and 14-18).
 
@@ -104,9 +104,32 @@ The time zone is read from the `Timezone` field of the user's Calendar Profile (
 
 The user's e-mail address is read from the Domino Directory (`InternetAddress` item of the Person document).
 
+## Building the Java sources
+
+The Java sources are built with Maven into a single `domino-time.jar`, which you then import into the NSF as a Jar File design element in Designer.
+
+```bash
+mvn package
+```
+
+The jar is written to `target/domino-time.jar`.
+
+The build compiles against `Notes.jar` and several XPages Extension Library / Domino Services OSGi jars, all proprietary HCL/IBM jars not published on Maven Central. No jar is ever copied into the project: the build resolves them directly from a local Notes/Domino Designer install, via two environment variables (or the equivalent `-D` override, see `pom.xml`):
+
+| Variable | Points to | Example |
+| --- | --- | --- |
+| `NOTES_HOME` | The Notes/Domino Designer install root | `C:\Notes` |
+| `EXTLIB_VERSION` | The release qualifier shared by the OSGi plugin jars under `$NOTES_HOME\osgi\shared\eclipse\plugins\`, e.g. from `com.ibm.xsp.extlib.core_14.5.1.v00_00_20260302-2103.jar` | `14.5.1.v00_00_20260302-2103` |
+
+```bash
+mvn package -Dnotes.home="C:/Notes" -Dextlib.version="14.5.1.v00_00_20260302-210"
+```
+
+json-simple and the Servlet API are resolved from Maven Central at compile time only (`provided` scope): they are not bundled into `domino-time.jar`. json-simple still needs its own Jar File design element in the NSF (see below); the Servlet API is supplied by Domino itself at runtime.
+
 ## Third-party components and attributions
 
-- [json-simple](https://code.google.com/archive/p/json-simple/) (`org.json.simple`), Apache License 2.0. It is included in the database; see `THIRD-PARTY-NOTICES.txt` for its license text.
+- [json-simple](https://code.google.com/archive/p/json-simple/) (`org.json.simple`), [Apache License 2.0](LICENSE).
 - HCL Domino / XPages Extension Library APIs, provided by the Domino server.
 
 ## License

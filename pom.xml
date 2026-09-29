@@ -1,0 +1,143 @@
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+	<modelVersion>4.0.0</modelVersion>
+
+	<groupId>it.devangarde</groupId>
+	<artifactId>domino-time</artifactId>
+	<version>1.0.0</version>
+	<packaging>jar</packaging>
+
+	<properties>
+		<project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+		<!-- Match the JDK actually bundled with the target Domino server; 17 is
+		     a conservative LTS floor (Domino 14.x ships a newer JVM). -->
+		<maven.compiler.release>17</maven.compiler.release>
+
+		<!--
+			Root of a local Notes/Domino Designer install, used to compile
+			directly against Notes.jar and the XPages Extension Library with
+			no jar ever copied into this project. Set once as an environment
+			variable (NOTES_HOME), or override per build:
+			mvn package -Dnotes.home="C:/Notes"
+		-->
+		<notes.home>${env.NOTES_HOME}</notes.home>
+
+		<extlib.version>${env.EXTLIB_VERSION}</extlib.version>
+	</properties>
+
+	<dependencies>
+		<!-- Redistributable (Apache 2.0), available on Maven Central: shipped
+		     as its own Jar File design element in the NSF, NOT bundled into
+		     this project's own jar (see build/finalName below and README). -->
+		<dependency>
+			<groupId>com.googlecode.json-simple</groupId>
+			<artifactId>json-simple</artifactId>
+			<version>1.1.1</version>
+			<scope>provided</scope>
+		</dependency>
+
+		<!-- Domino supplies the real HttpServletRequest/Response implementation
+		     at runtime; this is only needed to compile against the API. -->
+		<dependency>
+			<groupId>javax.servlet</groupId>
+			<artifactId>javax.servlet-api</artifactId>
+			<version>4.0.1</version>
+			<scope>provided</scope>
+		</dependency>
+
+		<!-- Notes.jar's own classfiles (compiled against an old JDK) reference
+		     org.omg.CORBA.*: the JDK bundled it up to Java 8, then removed it
+		     entirely (JEP 320). This republishes the same API for javac; the
+		     real CORBA runtime is provided by the JDK Domino itself runs on
+		     (still present there, just no longer on javac's own bootclasspath
+		     once we compile targeting a release above Java 8). -->
+		<dependency>
+			<groupId>org.glassfish.corba</groupId>
+			<artifactId>glassfish-corba-omgapi</artifactId>
+			<version>4.2.1</version>
+			<scope>provided</scope>
+		</dependency>
+
+		<!--
+			HCL/IBM proprietary jars, not published on any Maven repository:
+			resolved directly from a local Notes/Domino Designer install
+			(see the notes.home/extlib.version properties above and the
+			README), never copied into this project.
+			"lotus.domino.*" (the Domino Java API).
+		-->
+		<dependency>
+			<groupId>it.devangarde.domino</groupId>
+			<artifactId>notes-api</artifactId>
+			<version>local</version>
+			<scope>system</scope>
+			<systemPath>${notes.home}/ndext/Notes.jar</systemPath>
+		</dependency>
+
+		<!-- com.ibm.commons.util.AbstractException, the superclass of
+		     com.ibm.domino.services.ServiceException: lives next to Notes.jar
+		     itself, not among the OSGi plugins. -->
+		<dependency>
+			<groupId>it.devangarde.domino</groupId>
+			<artifactId>lwpd-commons</artifactId>
+			<version>local</version>
+			<scope>system</scope>
+			<systemPath>${notes.home}/ndext/lwpd.commons.jar</systemPath>
+		</dependency>
+
+		<dependency>
+			<groupId>it.devangarde.domino</groupId>
+			<artifactId>xsp-extlib-controls</artifactId>
+			<version>local</version>
+			<scope>system</scope>
+			<systemPath>${notes.home}/osgi/shared/eclipse/plugins/com.ibm.xsp.extlib.controls_${extlib.version}.jar</systemPath>
+		</dependency>
+
+		<dependency>
+			<groupId>it.devangarde.domino</groupId>
+			<artifactId>xsp-extlib-core</artifactId>
+			<version>local</version>
+			<scope>system</scope>
+			<systemPath>${notes.home}/osgi/shared/eclipse/plugins/com.ibm.xsp.extlib.core_${extlib.version}.jar</systemPath>
+		</dependency>
+
+		<dependency>
+			<groupId>it.devangarde.domino</groupId>
+			<artifactId>xsp-extlib-domino</artifactId>
+			<version>local</version>
+			<scope>system</scope>
+			<systemPath>${notes.home}/osgi/shared/eclipse/plugins/com.ibm.xsp.extlib.domino_${extlib.version}.jar</systemPath>
+		</dependency>
+
+		<!-- com.ibm.domino.services.* (ResponseCode, ServiceException, rest.RestServiceEngine),
+		     used directly by ServiceBean: a separate bundle from the xsp-extlib.* ones above,
+		     same release qualifier. -->
+		<dependency>
+			<groupId>it.devangarde.domino</groupId>
+			<artifactId>domino-services</artifactId>
+			<version>local</version>
+			<scope>system</scope>
+			<systemPath>${notes.home}/osgi/shared/eclipse/plugins/com.ibm.domino.services_${extlib.version}.jar</systemPath>
+		</dependency>
+	</dependencies>
+
+	<build>
+		<!-- Fixed name (no version suffix) so re-importing the jar into the
+		     NSF's Jar File design element after every build is a straight
+		     overwrite, not a pick-the-new-filename exercise. -->
+		<finalName>${project.artifactId}</finalName>
+
+		<plugins>
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-compiler-plugin</artifactId>
+				<version>3.13.0</version>
+			</plugin>
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-jar-plugin</artifactId>
+				<version>3.4.1</version>
+			</plugin>
+		</plugins>
+	</build>
+</project>
