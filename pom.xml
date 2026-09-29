@@ -10,9 +10,11 @@
 
 	<properties>
 		<project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-		<!-- Match the JDK actually bundled with the target Domino server; 17 is
-		     a conservative LTS floor (Domino 14.x ships a newer JVM). -->
-		<maven.compiler.release>17</maven.compiler.release>
+		<!-- Kept at the lowest JDK any supported Domino server might bundle
+		     (as old as Domino 12), so the same jar runs everywhere: the code
+		     uses nothing newer, verified by compiling with this same release
+		     value against the real Domino/XPages jars. -->
+		<maven.compiler.release>8</maven.compiler.release>
 
 		<!--
 			Root of a local Notes/Domino Designer install, used to compile

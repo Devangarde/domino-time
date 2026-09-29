@@ -45,7 +45,8 @@ public abstract class TimeServiceBean extends ServiceBean {
     protected String slug;
     protected Document userDoc;
     protected String username;      // canonical name, e.g. CN=Administrator/O=Sandbox
-    protected String mailFilePath;  // e.g. mail\administ.nsf
+    protected String mailServer;
+    protected String mailFilePath;
     protected String subject;
     protected List<AppointmentType> appointmentTypes = new ArrayList<>();
     protected Integer advanceDays;  // null = no limit
@@ -94,6 +95,7 @@ public abstract class TimeServiceBean extends ServiceBean {
         }
 
         this.username = this.userDoc.getItemValueString("Username");
+        this.mailServer = this.userDoc.getItemValueString("MailServer");
         this.mailFilePath = this.userDoc.getItemValueString("Mailfile");
         this.subject = this.userDoc.getItemValueString("Subject");
         if (this.username == null || this.username.isEmpty() || this.mailFilePath == null || this.mailFilePath.isEmpty()) {
@@ -113,7 +115,12 @@ public abstract class TimeServiceBean extends ServiceBean {
     private void loadAdvanceLimit() throws NotesException {
         this.advanceDays = null;
         if (isChecked(this.userDoc, "AdvanceLimit")) {
-            int days = this.userDoc.getItemValueInteger("AdvanceDays");
+            // AdvanceDays can be a plain number or a Computed field with a
+            // formula (e.g. "up to next Friday"): evaluate() handles both.
+            // Notes formula numbers always come back as Double, never Long.
+            Vector<?> evaluate = this.session.evaluate(this.userDoc.getItemValueString("AdvanceDays"), this.userDoc);
+            Object result = evaluate.isEmpty() ? null : evaluate.firstElement();
+            int days = (result instanceof Number) ? ((Number) result).intValue() : 0;
             if (days > 0) this.advanceDays = days;
         }
     }
@@ -298,7 +305,10 @@ public abstract class TimeServiceBean extends ServiceBean {
     /** Opens the user's mail as signer (local server only, no multi-server support yet). */
     protected Database openMailDb() throws NotesException {
         if (this.mailDb == null) {
-            this.mailDb = this.session.getDatabase(this.session.getServerName(), this.mailFilePath);
+            this.mailDb = this.session.getDatabase(
+				this.mailServer.isEmpty() ? this.session.getServerName() : this.mailServer,
+				this.mailFilePath
+			);
             if (this.mailDb == null || !this.mailDb.isOpen()) {
                 throw new IllegalStateException("mailFileNotOpened");
             }

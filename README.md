@@ -24,7 +24,7 @@ First-time setup of the server and the database.
 
 ### 1. Database
 
-- Requires HCL Domino 14 or later.
+- Requires HCL Domino 12 or later.
 - Sign the database with an ID that can read the users' mail files and the Domino Directory: the services run as the signer.
 - The ACL must include `Anonymous` with Reader access. No additional attributes are needed.
 - (Optional) Regular users can be included in the ACL (e.g. `*/Org`) with **Author** access, so they can edit their own profile document. No additional attributes are needed, except **Create documents** if you also want them to be able to create new profiles themselves.
@@ -83,6 +83,7 @@ In Notes, create a **User** document for every user who accepts bookings. The us
 | --- | --- |
 | Enabled | Checkbox. When cleared, online booking is suspended for this user |
 | User | Canonical name of the Domino user (as in the Domino Directory) |
+| Mail server | Server of the user's mail database. Leave blank to use the server Domino Time is running on |
 | Mail file path | Path of the user's mail database |
 | Slug (short link) | The short-URL part identifying the user, e.g. `jdoe` |
 | Welcome text | Welcome text shown on the booking page |
@@ -93,7 +94,7 @@ Optional settings:
 | Field | Description |
 | --- | --- |
 | Booking limit | Checkbox. When selected, bookings are limited to the next `AdvanceDays` days |
-| Maximum days | Number of days ahead that can be booked (used only when `AdvanceLimit` is selected) |
+| Maximum days | Number of days that can be booked (used only when `AdvanceLimit` is selected). The value is always evaluated, so a more complex rule is possible too — e.g. *up to next Friday* — using a formula such as `14 - @Modulo(@Weekday(@Today) + 5; 7) - 1` |
 | Monday ... Sunday | Checkbox, one per weekday. When selected, a list of start/end pairs can be provided: e.g. `09:00`, `13:00`, `14:00`, `16:00` means 9-13 and 14-16 |
 
 By default the bookable hours are the user's availability, as set in Notes under *More > Preferences... > Calendar & To-Do > Scheduling > Availability*. With an override, only the listed ranges of that day are bookable, so a day can be restricted (e.g. 9-13 and 14-16 instead of 9-13 and 14-18).
@@ -122,7 +123,7 @@ The build compiles against `Notes.jar` and several XPages Extension Library / Do
 | `EXTLIB_VERSION` | The release qualifier shared by the OSGi plugin jars under `$NOTES_HOME\osgi\shared\eclipse\plugins\`, e.g. from `com.ibm.xsp.extlib.core_14.5.1.v00_00_20260302-2103.jar` | `14.5.1.v00_00_20260302-2103` |
 
 ```bash
-mvn package -Dnotes.home="C:/Notes" -Dextlib.version="14.5.1.v00_00_20260302-210"
+mvn package -Dnotes.home="C:/Notes" -Dextlib.version="14.5.1.v00_00_20260302-2103"
 ```
 
 json-simple and the Servlet API are resolved from Maven Central at compile time only (`provided` scope): they are not bundled into `domino-time.jar`. json-simple still needs its own Jar File design element in the NSF (see below); the Servlet API is supplied by Domino itself at runtime.
