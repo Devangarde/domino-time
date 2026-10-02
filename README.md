@@ -16,7 +16,7 @@ The request lands in the user's own Notes calendar as a **draft meeting**: the u
 - The captcha is stateless: an AES-GCM encrypted token, no server-side session and no fonts nor dependencies required on the server.
 - The user's avatar on the booking page is fetched from [Gravatar](https://gravatar.com), based on their e-mail address.
 
-Tested with Domino server **14**, **14.5** and **14.5.1**.
+Tested with Domino server versions: **12**, **14**, **14.5** and **14.5.1**.
 
 ## Setup
 
@@ -24,10 +24,15 @@ First-time setup of the server and the database.
 
 ### 1. Database
 
-- Requires HCL Domino 12 or later.
-- Sign the database with an ID that can read the users' mail files and the Domino Directory: the services run as the signer.
-- The ACL must include `Anonymous` with Reader access. No additional attributes are needed.
-- (Optional) Regular users can be included in the ACL (e.g. `*/Org`) with **Author** access, so they can edit their own profile document. No additional attributes are needed, except **Create documents** if you also want them to be able to create new profiles themselves.
+Requires HCL Domino 12 or later. The application is distributed as a template (`time.ntf`):
+
+1. Sign the template with the server ID, or with a user ID that has write access to the users' mail files.
+2. Create a new database using the `DominoTime` template.
+3. Check the ACL:
+   - `Anonymous` must have **Reader** access, with no additional attributes.
+   - (Optional) Users (e.g. `*/Org`) have **Author** access, so they can manage the settings of their own profile (e.g. suspend bookings, change appointment types, durations, availability...), without the **Create documents** attribute.
+
+The services run as the signer, so that ID must also be able to read the Domino Directory.
 
 ### 2. Internet Site: allow Anonymous access
 
@@ -78,6 +83,8 @@ location / {
 ## Setting up users
 
 In Notes, create a **User** document for every user who accepts bookings. The user's public URL is `<DbPath>/<keyword>/<slug>`.
+
+The application is designed so that administrators (**Editor** access or higher) create the user profiles. Accordingly, the **User**, **Mail server**, **Mail file path** and **Slug (short link)** fields can only be edited by users with Editor access or higher. All the other fields can be edited by the profile's own user, since the **User** field is an *Authors* field.
 
 | Field | Description |
 | --- | --- |

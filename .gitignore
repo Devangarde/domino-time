@@ -1,4 +1,2 @@
-frontend
-
-# Maven build output
+frontend/
 target/
