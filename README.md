@@ -8,13 +8,14 @@ The request lands in the user's own Notes calendar as a **draft meeting**: the u
 
 ![Domino Time booking page](screenshot.png)
 
-## How it works
+## Features
 
 - Availability is computed from the user's real calendar, working hours, Out of Office settings and User availability.
 - Each request is written as an `Appointment` document. The requester is only stored as an invitee (not yet invited), so nothing is sent until the user sends the invitation.
 - The slot is checked again at confirmation time to avoid double bookings.
 - The captcha is stateless: an AES-GCM encrypted token, no server-side session and no fonts nor dependencies required on the server.
 - The user's avatar on the booking page is fetched from [Gravatar](https://gravatar.com), based on their e-mail address.
+- Available in **English**, **Italian**, **German** and **French**. The booking page automatically uses the language in use in the visitor's browser, falling back to English for any other language.
 
 Tested with Domino server versions: **12**, **14**, **14.5** and **14.5.1**.
 
@@ -139,6 +140,8 @@ json-simple and the Servlet API are resolved from Maven Central at compile time 
 
 - [json-simple](https://code.google.com/archive/p/json-simple/) (`org.json.simple`), [Apache License 2.0](LICENSE).
 - HCL Domino / XPages Extension Library APIs, provided by the Domino server.
+- Application icon: [Calendar icons created by iconfield - Flaticon](https://www.flaticon.com/free-icons/calendar "calendar icons").
+- Favicon: the one used by HCL Verse, which is the property of HCL.
 
 ## License
 
