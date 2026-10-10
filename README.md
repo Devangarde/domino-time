@@ -81,6 +81,14 @@ location / {
 }
 ```
 
+**Base URL of the static resources**
+
+By default the booking page loads its CSS and JavaScript resources with absolute URLs, built from the database path returned by `@WebDbName` (e.g. `/calendar/time.nsf/`). When the service is exposed on a different path, as with the dedicated host above, set the `$DominoTimeBaseURL` variable in the server's `notes.ini` to the public path instead. The value must always end with a slash (e.g. `/` or `/booking/`, not `/booking`). For example, from the server console:
+
+```
+set config $DominoTimeBaseURL=/
+```
+
 ## Setting up users
 
 In Notes, create a **User** document for every user who accepts bookings. The user's public URL is `<DbPath>/<keyword>/<slug>`.
