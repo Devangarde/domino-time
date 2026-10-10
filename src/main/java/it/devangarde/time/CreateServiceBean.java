@@ -1,7 +1,7 @@
 package it.devangarde.time;
 
 import it.devangarde.BadRequestException;
-import org.json.simple.JSONObject;
+import com.ibm.commons.util.io.json.JsonJavaObject;
 import it.devangarde.captcha.CaptchaService;
 import lotus.domino.Database;
 import lotus.domino.DateTime;
@@ -40,21 +40,20 @@ import java.util.Vector;
 public class CreateServiceBean extends TimeServiceBean {
 
     /**
-     * getString/getObject do not exist on it.devangarde.JSONObject (they
-     * belonged to a superclass no longer in use): minimal reads via
-     * .get(key), assuming JSONObject is a Map (like org.json.simple.JSONObject).
+     * Strict typed reads: unlike JsonJavaObject.getString/getAsObject, a value
+     * of the wrong JSON type counts as missing instead of being converted
+     * (e.g. "name": 123 is rejected, not turned into "123").
      */
-    private static Optional<String> getString(JSONObject obj, String key) {
+    private static Optional<String> getString(JsonJavaObject obj, String key) {
         Object v = obj.get(key);
         return (v instanceof String) ? Optional.of((String) v) : Optional.empty();
     }
 
-    private static Optional<JSONObject> getObject(JSONObject obj, String key) {
+    private static Optional<JsonJavaObject> getObject(JsonJavaObject obj, String key) {
         Object v = obj.get(key);
-        return (v instanceof JSONObject) ? Optional.of((JSONObject) v) : Optional.empty();
+        return (v instanceof JsonJavaObject) ? Optional.of((JsonJavaObject) v) : Optional.empty();
     }
 
-    @SuppressWarnings("unchecked")
     public void post() throws Exception {
         loadProfile();
 
@@ -106,7 +105,7 @@ public class CreateServiceBean extends TimeServiceBean {
         // a separate follow-up /week call, which would also risk showing
         // stale data if freeTimeSearch/the scheduling task hasn't caught up
         // yet with the entry just created.
-        JSONObject availability = buildAvailabilityJson(start);
+        JsonJavaObject availability = buildAvailabilityJson(start);
         this.body.put("since", availability.get("since"));
         this.body.put("before", availability.get("before"));
         this.body.put("freeRanges", availability.get("freeRanges"));
@@ -115,7 +114,7 @@ public class CreateServiceBean extends TimeServiceBean {
     }
 
     private void verifyCaptcha() throws BadRequestException, NotesException {
-        JSONObject captchaObj = getObject(this.payload, "captcha")
+        JsonJavaObject captchaObj = getObject(this.payload, "captcha")
                 .orElseThrow(() -> new BadRequestException("captchaRequired"));
         String token = getString(captchaObj, "token")
                 .orElseThrow(() -> new BadRequestException("captchaRequired"));

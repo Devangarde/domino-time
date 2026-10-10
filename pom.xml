@@ -5,7 +5,7 @@
 
 	<groupId>it.devangarde</groupId>
 	<artifactId>domino-time</artifactId>
-	<version>1.1.0-rc1</version>
+	<version>1.1.0-rc2</version>
 	<packaging>jar</packaging>
 
 	<properties>
@@ -29,16 +29,6 @@
 	</properties>
 
 	<dependencies>
-		<!-- Redistributable (Apache 2.0), available on Maven Central: shipped
-		     as its own Jar File design element in the NSF, NOT bundled into
-		     this project's own jar (see build/finalName below and README). -->
-		<dependency>
-			<groupId>com.googlecode.json-simple</groupId>
-			<artifactId>json-simple</artifactId>
-			<version>1.1.1</version>
-			<scope>provided</scope>
-		</dependency>
-
 		<!-- Domino supplies the real HttpServletRequest/Response implementation
 		     at runtime; this is only needed to compile against the API. -->
 		<dependency>
@@ -77,8 +67,9 @@
 		</dependency>
 
 		<!-- com.ibm.commons.util.AbstractException, the superclass of
-		     com.ibm.domino.services.ServiceException: lives next to Notes.jar
-		     itself, not among the OSGi plugins. -->
+		     com.ibm.domino.services.ServiceException, and com.ibm.commons.util.io.json
+		     (request/response JSON, the same library XPages REST services use):
+		     lives next to Notes.jar itself, not among the OSGi plugins. -->
 		<dependency>
 			<groupId>it.devangarde.domino</groupId>
 			<artifactId>lwpd-commons</artifactId>

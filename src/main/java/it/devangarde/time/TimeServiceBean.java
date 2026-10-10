@@ -8,8 +8,8 @@ import lotus.domino.Document;
 import lotus.domino.NotesCalendar;
 import lotus.domino.NotesException;
 import lotus.domino.View;
-import org.json.simple.JSONArray;
-import org.json.simple.JSONObject;
+import com.ibm.commons.util.io.json.JsonJavaArray;
+import com.ibm.commons.util.io.json.JsonJavaObject;
 
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
@@ -414,22 +414,21 @@ public abstract class TimeServiceBean extends ServiceBean {
      * response, instead of a separate follow-up call the client would
      * otherwise need to make).
      */
-    @SuppressWarnings("unchecked")
-	protected JSONObject buildAvailabilityJson(Date referenceDate) throws NotesException {
+	protected JsonJavaObject buildAvailabilityJson(Date referenceDate) throws NotesException {
         Date monday = mondayOfWeekContaining(referenceDate != null ? referenceDate : new Date());
         Date before = new Date(monday.getTime() + 7L * 86400000);
 
         List<long[]> free = computeFreeRanges(monday);
 
-        JSONArray freeRangesJson = new JSONArray();
+        JsonJavaArray freeRangesJson = new JsonJavaArray();
         for (long[] r : free) {
-            JSONObject rj = new JSONObject();
+            JsonJavaObject rj = new JsonJavaObject();
             rj.put("start", ISO_UTC.format(new Date(r[0])));
             rj.put("end", ISO_UTC.format(new Date(r[1])));
             freeRangesJson.add(rj);
         }
 
-        JSONObject json = new JSONObject();
+        JsonJavaObject json = new JsonJavaObject();
         json.put("since", ISO_UTC.format(monday));
         json.put("before", ISO_UTC.format(before));
         json.put("freeRanges", freeRangesJson);

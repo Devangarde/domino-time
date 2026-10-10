@@ -1,7 +1,9 @@
 package it.devangarde;
 
-import org.json.simple.parser.JSONParser;
-import org.json.simple.JSONObject;
+import com.ibm.commons.util.io.json.JsonGenerator;
+import com.ibm.commons.util.io.json.JsonJavaFactory;
+import com.ibm.commons.util.io.json.JsonJavaObject;
+import com.ibm.commons.util.io.json.JsonParser;
 
 import java.util.Map;
 import java.util.HashMap;
@@ -30,8 +32,8 @@ public class ServiceBean extends com.ibm.xsp.extlib.component.rest.CustomService
 	private RestServiceEngine engine;
 	protected HttpServletRequest request;
 	protected HttpServletResponse response;
-	protected JSONObject payload;
-	protected JSONObject body;
+	protected JsonJavaObject payload;
+	protected JsonJavaObject body;
 	protected Map<String, String> queryString;
 
    	protected Session session;
@@ -44,7 +46,7 @@ public class ServiceBean extends com.ibm.xsp.extlib.component.rest.CustomService
 		
 		this.response.setHeader("Content-Type", "application/json; charset=UTF-8");
 		
-		this.body = new JSONObject();
+		this.body = new JsonJavaObject();
 		
 		this.buildQueryString();
 		this.buildPayload();
@@ -102,7 +104,7 @@ public class ServiceBean extends com.ibm.xsp.extlib.component.rest.CustomService
         try {
             try {
                 PrintWriter writer = this.response.getWriter();
-                writer.write(this.body.toString());
+                JsonGenerator.toJson(JsonJavaFactory.instanceEx, writer, this.body, true);
                 writer.close();
             } catch (IllegalStateException isex) {
                 // getWriter not available when engine.displayError() was already called
@@ -149,8 +151,10 @@ public class ServiceBean extends com.ibm.xsp.extlib.component.rest.CustomService
 	
 	private void buildPayload() {
 		try (BufferedReader reader = this.request.getReader()) {
-			JSONParser parser = new JSONParser();
-			this.payload = new JSONObject((org.json.simple.JSONObject)parser.parse(reader));
+			// instanceEx: nested objects come back as JsonJavaObject (the plain
+			// factory would build bare HashMaps instead)
+			Object parsed = JsonParser.fromJson(JsonJavaFactory.instanceEx, reader);
+			this.payload = (parsed instanceof JsonJavaObject) ? (JsonJavaObject) parsed : null;
 		} catch (Exception e) {
 			//e.printStackTrace();
 		}

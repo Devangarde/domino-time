@@ -15,7 +15,7 @@ The request lands in the user's own Notes calendar as a **draft meeting**: the u
 - The slot is checked again at confirmation time to avoid double bookings.
 - The captcha is stateless: an AES-GCM encrypted token, no server-side session and no fonts nor dependencies required on the server.
 - The user's avatar on the booking page is fetched from [Gravatar](https://gravatar.com), based on their e-mail address.
-- Available in **English**, **Italian**, **German** and **French**. The booking page automatically uses the language in use in the visitor's browser, falling back to English for any other language.
+- Available in **English**, **Italian**, **German**, **French** and **Spanish**. The booking page automatically uses the language in use in the visitor's browser, falling back to English for any other language.
 
 Tested with Domino server versions: **12**, **14**, **14.5** and **14.5.1**.
 
@@ -134,11 +134,10 @@ The build compiles against `Notes.jar` and several XPages Extension Library / Do
 mvn package -Dnotes.home="C:/Notes" -Dextlib.version="14.5.1.v00_00_20260302-2103"
 ```
 
-json-simple and the Servlet API are resolved from Maven Central at compile time only (`provided` scope): they are not bundled into `domino-time.jar`. json-simple still needs its own Jar File design element in the NSF (see below); the Servlet API is supplied by Domino itself at runtime.
+JSON is handled with `com.ibm.commons.util.io.json`, the same library used by XPages REST services, shipped with Domino itself: no extra jar is needed in the NSF besides `domino-time.jar`. The Servlet API is resolved from Maven Central at compile time only (`provided` scope) and is supplied by Domino at runtime.
 
 ## Third-party components and attributions
 
-- [json-simple](https://code.google.com/archive/p/json-simple/) (`org.json.simple`), [Apache License 2.0](LICENSE).
 - HCL Domino / XPages Extension Library APIs, provided by the Domino server.
 - Application icon: [Calendar icons created by iconfield - Flaticon](https://www.flaticon.com/free-icons/calendar "calendar icons").
 - Favicon: the one used by HCL Verse, which is the property of HCL.

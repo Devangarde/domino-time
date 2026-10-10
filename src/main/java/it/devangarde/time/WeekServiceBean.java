@@ -5,8 +5,8 @@ import lotus.domino.Database;
 import lotus.domino.DateTime;
 import lotus.domino.Document;
 import lotus.domino.NotesException;
-import org.json.simple.JSONArray;
-import org.json.simple.JSONObject;
+import com.ibm.commons.util.io.json.JsonJavaArray;
+import com.ibm.commons.util.io.json.JsonJavaObject;
 
 import java.text.SimpleDateFormat;
 import java.time.Instant;
@@ -54,7 +54,6 @@ public class WeekServiceBean extends TimeServiceBean {
         return f;
     }
 
-    @SuppressWarnings("unchecked")
     public void get() throws Exception {
         loadProfile();
 
@@ -69,7 +68,7 @@ public class WeekServiceBean extends TimeServiceBean {
             throw new BadRequestException("weekBeyondAdvanceLimit");
         }
 
-        JSONObject availability = buildAvailabilityJson(referenceDate);
+        JsonJavaObject availability = buildAvailabilityJson(referenceDate);
         this.body.put("since", availability.get("since"));
         this.body.put("before", availability.get("before"));
         this.body.put("freeRanges", availability.get("freeRanges"));
@@ -90,20 +89,19 @@ public class WeekServiceBean extends TimeServiceBean {
         }
     }
 
-    @SuppressWarnings("unchecked")
-    private JSONObject buildProfileJson(Date targetMonday) throws Exception {
-        JSONObject profileJson = new JSONObject();
+    private JsonJavaObject buildProfileJson(Date targetMonday) throws Exception {
+        JsonJavaObject profileJson = new JsonJavaObject();
         profileJson.put("name", displayName(this.username));
         profileJson.put("org", displayOrg(this.username));
         profileJson.put("subject", this.subject);
 		profileJson.put("hash", convertToMD5(getUserInternetAddress().toLowerCase()));
 
-        JSONArray typesJson = new JSONArray();
+        JsonJavaArray typesJson = new JsonJavaArray();
         for (AppointmentType t : this.appointmentTypes) {
-            JSONObject tj = new JSONObject();
+            JsonJavaObject tj = new JsonJavaObject();
             tj.put("name", t.name);
             tj.put("description", t.description);
-            JSONArray durationsJson = new JSONArray();
+            JsonJavaArray durationsJson = new JsonJavaArray();
             durationsJson.addAll(t.durations);
             tj.put("durations", durationsJson);
             typesJson.add(tj);
@@ -127,16 +125,16 @@ public class WeekServiceBean extends TimeServiceBean {
             profileJson.put("advanceDays", this.advanceDays);
         }
 
-        JSONArray templateJson = new JSONArray();
+        JsonJavaArray templateJson = new JsonJavaArray();
         for (WeekTemplate.Day d : template) {
-            JSONObject dj = new JSONObject();
+            JsonJavaObject dj = new JsonJavaObject();
             dj.put("closed", d.closed);
             if (!d.closed) {
                 dj.put("startMin", d.startMin);
                 dj.put("endMin", d.endMin);
-                JSONArray breaksJson = new JSONArray();
+                JsonJavaArray breaksJson = new JsonJavaArray();
                 for (int[] b : d.breaks) {
-                    JSONArray pair = new JSONArray();
+                    JsonJavaArray pair = new JsonJavaArray();
                     pair.add(b[0]);
                     pair.add(b[1]);
                     breaksJson.add(pair);
@@ -147,7 +145,7 @@ public class WeekServiceBean extends TimeServiceBean {
         }
         profileJson.put("template", templateJson);
 
-        JSONObject outOfOffice = buildOutOfOfficeJson();
+        JsonJavaObject outOfOffice = buildOutOfOfficeJson();
         if (outOfOffice != null) {
             profileJson.put("outOfOffice", outOfOffice);
         }
@@ -171,8 +169,7 @@ public class WeekServiceBean extends TimeServiceBean {
      *
      * Returns null when Out of Office is not currently active.
      */
-    @SuppressWarnings("unchecked")
-    private JSONObject buildOutOfOfficeJson() throws NotesException {
+    private JsonJavaObject buildOutOfOfficeJson() throws NotesException {
         Database mailDb = openMailDb();
         Document ooo = mailDb.getProfileDocument("OutOfOfficeProfile", "");
         if (ooo == null) return null;
@@ -210,7 +207,7 @@ public class WeekServiceBean extends TimeServiceBean {
                 end = e.getTime();
             }
 
-            JSONObject json = new JSONObject();
+            JsonJavaObject json = new JsonJavaObject();
             json.put("start", ISO_UTC.format(start));
             json.put("end", ISO_UTC.format(end));
             return json;
